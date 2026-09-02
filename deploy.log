@@ -11,12 +11,12 @@
 
 
 Total Upload: 60.28 KiB / gzip: 14.98 KiB
-Worker Startup Time: 17 ms
+Worker Startup Time: 29 ms
 No bindings found.
-Uploaded cf-control-mcp (1.33 sec)
-Deployed cf-control-mcp triggers (0.11 sec)
+Uploaded cf-control-mcp (1.69 sec)
+Deployed cf-control-mcp triggers (0.12 sec)
   https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-Current Version ID: 42b009f3-4bdc-4bf2-8c44-31c6fe1aef94
+Current Version ID: 778e3465-9f4e-4acc-8a35-9d656baa78d6
 
 Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
 deploy exit code: 0
@@ -61,15 +61,4 @@ deploy exit code: 0
 🌀 Creating the secret for the Worker "cf-control-mcp" 
 ✨ Success! Uploaded secret CLOUDFLARE_ACCOUNT_ID
 === live OAuth/MCP verification ===
-Traceback (most recent call last):
-  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 275, in <module>
-    raise SystemExit(main())
-                     ^^^^^^
-  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 105, in main
-    protected, _ = request_json("/.well-known/oauth-protected-resource")
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 92, in request_json
-    fail(f"{method} {path}: expected HTTP {expected}, got {status}: {raw[:500]!r}")
-  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 59, in fail
-    raise AssertionError(message)
-AssertionError: GET /.well-known/oauth-protected-resource: expected HTTP 200, got 403: b'{"type":"https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1010/","title":"Error 1010: Access denied","status":403,"detail":"The site owner has blocked access based on your browser\'s signature.","instance":"a349a660bf11d95e","error_code":1010,"error_name":"browser_signature_banned","error_category":"access_denied","ray_id":"a349a660bf11d95e","timestamp":"2026-09-02T04:07:48Z","zone":"cf-control-mcp.amin-chinisaz-edu.workers.dev","cloudflare_'
+PASS: OAuth discovery, DCR, consent, PKCE, token exchange, refresh, read-only MCP scope, legacy path, and 401 challenge
