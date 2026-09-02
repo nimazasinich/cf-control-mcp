@@ -11,12 +11,12 @@
 
 
 Total Upload: 60.28 KiB / gzip: 14.98 KiB
-Worker Startup Time: 19 ms
+Worker Startup Time: 29 ms
 No bindings found.
-Uploaded cf-control-mcp (1.67 sec)
-Deployed cf-control-mcp triggers (0.09 sec)
+Uploaded cf-control-mcp (1.69 sec)
+Deployed cf-control-mcp triggers (0.12 sec)
   https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-Current Version ID: 2b6be5a2-7362-4ebd-af6b-454cf3c070d1
+Current Version ID: 778e3465-9f4e-4acc-8a35-9d656baa78d6
 
 Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
 deploy exit code: 0
@@ -61,17 +61,4 @@ deploy exit code: 0
 🌀 Creating the secret for the Worker "cf-control-mcp" 
 ✨ Success! Uploaded secret CLOUDFLARE_ACCOUNT_ID
 === live OAuth/MCP verification ===
-Traceback (most recent call last):
-  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 274, in <module>
-    raise SystemExit(main())
-                     ^^^^^^
-  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 104, in main
-    protected, _ = request_json("/.well-known/oauth-protected-resource")
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 83, in request_json
-    response = request(path, method=method, headers=hdrs, data=data)
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 66, in request
-    return opener.open(req, timeout=30)
-           ^^^^^^^^^^^
-AttributeError: module 'urllib.request' has no attribute 'open'
+PASS: OAuth discovery, DCR, consent, PKCE, token exchange, refresh, read-only MCP scope, legacy path, and 401 challenge
