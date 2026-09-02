@@ -10,13 +10,13 @@
   After installation, run Wrangler with `npx wrangler`.
 
 
-Total Upload: 60.28 KiB / gzip: 14.98 KiB
-Worker Startup Time: 29 ms
+Total Upload: 58.09 KiB / gzip: 14.48 KiB
+Worker Startup Time: 17 ms
 No bindings found.
-Uploaded cf-control-mcp (1.69 sec)
-Deployed cf-control-mcp triggers (0.12 sec)
+Uploaded cf-control-mcp (1.11 sec)
+Deployed cf-control-mcp triggers (0.14 sec)
   https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-Current Version ID: 778e3465-9f4e-4acc-8a35-9d656baa78d6
+Current Version ID: 36621bae-26dd-4d54-b5c8-fb454337ac4b
 
 Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
 deploy exit code: 0
@@ -61,4 +61,12 @@ deploy exit code: 0
 🌀 Creating the secret for the Worker "cf-control-mcp" 
 ✨ Success! Uploaded secret CLOUDFLARE_ACCOUNT_ID
 === live OAuth/MCP verification ===
-PASS: OAuth discovery, DCR, consent, PKCE, token exchange, refresh, read-only MCP scope, legacy path, and 401 challenge
+Traceback (most recent call last):
+  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 335, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 290, in main
+    fail("write tool was not blocked by the OAuth scope guard")
+  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 62, in fail
+    raise AssertionError(message)
+AssertionError: write tool was not blocked by the OAuth scope guard
