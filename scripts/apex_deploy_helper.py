@@ -108,6 +108,64 @@ def safe_extract(zip_path: str, dest: str) -> int:
             if target != root and root not in target.parents:
                 raise SystemExit(f"unsafe zip path: {info.filename}")
         zf.extractall(root)
+    print(f"file_count={sum(1 for p in root.rglob('*') if p.is_file())}")
+    return 0
+
+
+def prepare_harness(root_dir: str, worker_name: str) -> int:
+    root = Path(root_dir).resolve()
+    if not re.fullmatch(r"[a-z0-9-]{1,63}", worker_name):
+        raise SystemExit("invalid worker_name")
+    (root / ".cloudflare").mkdir(exist_ok=True)
+    (root / "Dockerfile.cloudflare").write_text(
+        "FROM node:22-bookworm\n"
+        "WORKDIR /app\n"
+        "COPY . .\n"
+        "RUN npm ci && npm run build && npm prune --omit=dev\n"
+        "ENV NODE_ENV=production\n"
+        "ENV PORT=8080\n"
+        "ENV HOST=0.0.0.0\n"
+        "ENV APEX_SERVE_DIST=1\n"
+        "ENV APEX_DEPLOYMENT_PROFILE=production\n"
+        "EXPOSE 8080\n"
+        "CMD [\"npm\",\"start\"]\n"
+    )
+    (root / ".dockerignore").write_text("node_modules\n_release\n.git\n")
+    (root / ".cloudflare" / "apex-worker.ts").write_text(
+        "import { Container } from '@cloudflare/containers';\n\n"
+        "export class ApexContainer extends Container {\n"
+        "  defaultPort = 8080;\n"
+        "  sleepAfter = '30m';\n"
+        "  envVars = {\n"
+        "    NODE_ENV: 'production',\n"
+        "    PORT: '8080',\n"
+        "    HOST: '0.0.0.0',\n"
+        "    APEX_SERVE_DIST: '1',\n"
+        "    APEX_DEPLOYMENT_PROFILE: 'production',\n"
+        "  };\n"
+        "}\n\n"
+        "export default {\n"
+        "  async fetch(request: Request, env: any): Promise<Response> {\n"
+        "    const container = env.APEX_CONTAINER.getByName('apex-cp28-primary');\n"
+        "    return container.fetch(request);\n"
+        "  },\n"
+        "};\n"
+    )
+    config = {
+        "name": worker_name,
+        "main": ".cloudflare/apex-worker.ts",
+        "compatibility_date": "2026-09-02",
+        "containers": [{
+            "max_instances": 1,
+            "instance_type": "basic",
+            "class_name": "ApexContainer",
+            "image": "./Dockerfile.cloudflare",
+            "image_build_context": ".",
+        }],
+        "durable_objects": {"bindings": [{"name": "APEX_CONTAINER", "class_name": "ApexContainer"}]},
+        "migrations": [{"tag": "v1", "new_sqlite_classes": ["ApexContainer"]}],
+    }
+    (root / "wrangler.apex.jsonc").write_text(json.dumps(config, indent=2) + "\n")
     return 0
 
 
@@ -128,8 +186,6 @@ def write_result(req_path: str) -> int:
         "live_probe": to_int("LIVE_EXIT"),
     }
     ok = all(v == 0 for v in steps.values())
-    live_http = to_int("LIVE_HTTP")
-    file_count = to_int("FILE_COUNT")
     result = {
         "project": "APEX",
         "request_id": req["request_id"],
@@ -142,8 +198,8 @@ def write_result(req_path: str) -> int:
         },
         "worker_name": req.get("worker_name", "apex-cp28-staging"),
         "live_url": os.environ.get("LIVE_URL") or None,
-        "live_http_status": live_http,
-        "extracted_file_count": file_count,
+        "live_http_status": to_int("LIVE_HTTP"),
+        "extracted_file_count": to_int("FILE_COUNT"),
         "steps": steps,
         "security": {
             "deployment_profile": "production",
@@ -166,6 +222,9 @@ def main() -> int:
     e = sp.add_parser("extract")
     e.add_argument("zip")
     e.add_argument("dest")
+    h = sp.add_parser("prepare-harness")
+    h.add_argument("root")
+    h.add_argument("worker_name")
     r = sp.add_parser("write-result")
     r.add_argument("request")
     args = ap.parse_args()
@@ -175,6 +234,8 @@ def main() -> int:
         return decrypt_url(args.request, args.output)
     if args.cmd == "extract":
         return safe_extract(args.zip, args.dest)
+    if args.cmd == "prepare-harness":
+        return prepare_harness(args.root, args.worker_name)
     if args.cmd == "write-result":
         return write_result(args.request)
     return 2
