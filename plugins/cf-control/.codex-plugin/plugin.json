@@ -1,0 +1,41 @@
+{
+  "name": "cf-control",
+  "version": "0.1.0",
+  "description": "Inspect and manage a Cloudflare account through the cf-control-mcp remote MCP server.",
+  "author": {
+    "name": "nimazasinich",
+    "url": "https://github.com/nimazasinich"
+  },
+  "homepage": "https://github.com/nimazasinich/cf-control-mcp",
+  "repository": "https://github.com/nimazasinich/cf-control-mcp",
+  "keywords": [
+    "cloudflare",
+    "mcp",
+    "workers",
+    "dns",
+    "kv",
+    "cache"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "CF Control",
+    "shortDescription": "Inspect and manage Cloudflare through your private MCP server",
+    "longDescription": "Use the private cf-control-mcp service to inspect Cloudflare zones, DNS, Workers and KV, and to perform explicitly approved changes such as DNS updates, cache purges and KV writes.",
+    "developerName": "nimazasinich",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/nimazasinich/cf-control-mcp",
+    "defaultPrompt": [
+      "List my Cloudflare zones and Workers.",
+      "Inspect DNS records without making changes.",
+      "Review my Cloudflare configuration and suggest safe changes."
+    ],
+    "brandColor": "#F48120",
+    "screenshots": []
+  }
+}
