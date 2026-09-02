@@ -61,9 +61,10 @@ def fail(message: str) -> None:
 
 def request(path: str, *, method: str = "GET", headers: dict[str, str] | None = None, data: bytes | None = None, no_redirect: bool = False):
     req = urllib.request.Request(BASE_URL + path, data=data, headers=headers or {}, method=method)
-    opener = NO_REDIRECT if no_redirect else urllib.request
     try:
-        return opener.open(req, timeout=30)
+        if no_redirect:
+            return NO_REDIRECT.open(req, timeout=30)
+        return urllib.request.urlopen(req, timeout=30)
     except urllib.error.HTTPError as exc:
         if no_redirect and exc.code in (301, 302, 303, 307, 308):
             return exc
