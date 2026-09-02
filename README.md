@@ -1,63 +1,97 @@
 # cf-control-mcp
 
-A remote MCP server, deployed as a Cloudflare Worker, that exposes tools for
-controlling a Cloudflare account (zones, DNS, cache, Workers, KV) to any MCP
-client — including ChatGPT (Developer Mode), Claude, or any other MCP-capable
-agent.
+A private remote MCP server deployed on Cloudflare Workers for inspecting and managing a Cloudflare account. It supports Streamable HTTP at `/mcp`, OAuth discovery + PKCE for ChatGPT-compatible clients, and the original owner bearer-token path for legacy/desktop use.
 
-## 1. Prerequisites
+## Security model
 
-- A Cloudflare account with `wrangler` CLI access: `npm install -g wrangler`
-- A **Cloudflare API Token** (not your Global API Key) with the permissions
-  you want to expose, e.g.:
-  - Zone → DNS → Edit
-  - Zone → Cache Purge → Purge
-  - Account → Workers Scripts → Read
-  - Account → Workers KV Storage → Edit
-  Create one at: https://dash.cloudflare.com/profile/api-tokens
-- Your **Cloudflare Account ID** (shown on the right sidebar of any zone's
-  Overview page in the dashboard).
+There are two separate credential layers:
 
-## 2. Deploy
+1. **Client → MCP Worker** — OAuth 2.1-style authorization with PKCE and explicit owner approval. The existing `MCP_AUTH_TOKEN` is used as the owner approval secret and as the HMAC root key for stateless OAuth artifacts.
+2. **MCP Worker → Cloudflare API** — `CLOUDFLARE_API_TOKEN`, stored only as a Worker secret. It is never returned to MCP clients.
+
+Rotating `MCP_AUTH_TOKEN` invalidates previously registered OAuth clients, authorization codes, access tokens, refresh tokens, and the legacy bearer credential.
+
+## Deploy
 
 ```bash
-cd cf-control-mcp
 npm install
 wrangler login
 
-# Generate a random secret to protect this server's /mcp endpoint.
-# Anyone with this token can call every tool below, so treat it like a password.
 openssl rand -hex 32
-
-wrangler secret put MCP_AUTH_TOKEN        # paste the value you just generated
-wrangler secret put CLOUDFLARE_API_TOKEN  # paste your Cloudflare API token
-wrangler secret put CLOUDFLARE_ACCOUNT_ID # paste your Cloudflare account ID
+wrangler secret put MCP_AUTH_TOKEN
+wrangler secret put CLOUDFLARE_API_TOKEN
+wrangler secret put CLOUDFLARE_ACCOUNT_ID
 
 npm run deploy
 ```
 
-Wrangler prints your Worker's URL, e.g. `https://cf-control-mcp.<subdomain>.workers.dev`.
-The MCP endpoint is that URL + `/mcp`.
+The production MCP endpoint is:
 
-## 3. Connect it to ChatGPT
+```text
+https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp
+```
 
-ChatGPT connects to arbitrary remote MCP servers through **Developer Mode**
-(Settings → Apps & Connectors → Advanced → Developer mode), available on
-Plus/Pro/Business/Enterprise/Edu plans:
+`wrangler.jsonc` routes the Worker through `src/oauth-worker.ts`, which wraps the existing MCP implementation in `src/index.ts`.
 
-1. Settings → Apps & Connectors → **Create** (or **Add custom connector**).
-2. **MCP server URL**: `https://cf-control-mcp.<subdomain>.workers.dev/mcp`
-3. **Authentication**: choose "API key" / "Bearer token" and paste the
-   `MCP_AUTH_TOKEN` value you generated above.
-4. Save, then enable the connector for a conversation via the tools (+) menu.
-   ChatGPT will call `initialize` and `tools/list` automatically and the
-   Cloudflare tools will show up as available functions.
+## OAuth endpoints
 
-The same server URL + Bearer token also works with Claude ("Add custom
-connector" in Settings → Connectors) or any other MCP client that supports
-remote Streamable HTTP servers.
+The Worker exposes the metadata and endpoints required by an OAuth-capable MCP client:
 
-## 4. Tools exposed
+| Endpoint | Purpose |
+|---|---|
+| `/.well-known/oauth-protected-resource` | Protected-resource metadata |
+| `/.well-known/oauth-authorization-server` | Authorization-server metadata |
+| `/register` | Dynamic client registration |
+| `/authorize` | PKCE authorization + explicit owner approval page |
+| `/token` | Authorization-code and refresh-token exchange |
+| `/mcp` | Streamable HTTP MCP endpoint |
+
+OAuth public clients must use PKCE with `S256`. The authorization page displays the requesting client and redirect URI, then requires the owner approval token before issuing an authorization code.
+
+The OAuth scopes are:
+
+- `mcp:read`
+- `offline_access`
+
+`offline_access` enables refresh tokens so clients can maintain connectivity without repeating authorization every hour.
+
+## ChatGPT Web / Pro
+
+Use the MCP URL only:
+
+```text
+https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp
+```
+
+When ChatGPT Web has Custom MCP / Developer Mode available for the account, it should discover OAuth from the MCP 401 challenge and `.well-known` metadata, dynamically register itself, open the `/authorize` approval page, and complete PKCE after owner approval.
+
+For OAuth-connected clients, the server intentionally exposes **read-only tools only**. This matches the current ChatGPT Pro custom-MCP read/fetch capability and prevents write actions from leaking into the Pro connection.
+
+### OAuth-visible tools
+
+| Tool | Purpose |
+|---|---|
+| `cf_list_zones` | List zones/domains |
+| `cf_list_dns_records` | List DNS records |
+| `cf_list_workers` | List Workers |
+| `cf_get_worker_metadata` | Inspect Worker metadata |
+| `cf_kv_list_namespaces` | List KV namespaces |
+| `cf_kv_get_value` | Read a KV key |
+
+Write tools are filtered from OAuth `tools/list` and are blocked server-side if called with an OAuth access token.
+
+## Legacy owner-token access
+
+The original direct bearer-token path is retained for trusted desktop/CI clients. Supplying the exact `MCP_AUTH_TOKEN` as the bearer token bypasses the OAuth flow and exposes the full existing toolset.
+
+```bash
+curl -X POST https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp \
+  -H "Authorization: Bearer <MCP_AUTH_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+### Full legacy toolset
 
 | Tool | What it does | Destructive? |
 |---|---|---|
@@ -65,39 +99,47 @@ remote Streamable HTTP servers.
 | `cf_list_dns_records` | List DNS records for a zone | no |
 | `cf_create_dns_record` | Create a DNS record | yes |
 | `cf_delete_dns_record` | Delete a DNS record | yes |
-| `cf_purge_cache` | Purge edge cache (selective or full) | yes |
+| `cf_purge_cache` | Purge edge cache | yes |
 | `cf_list_workers` | List deployed Worker scripts | no |
-| `cf_get_worker_metadata` | Get bindings/routes for a Worker | no |
+| `cf_get_worker_metadata` | Get Worker bindings/routes metadata | no |
 | `cf_kv_list_namespaces` | List Workers KV namespaces | no |
 | `cf_kv_get_value` | Read a KV key | no |
 | `cf_kv_put_value` | Write a KV key | yes |
 
-Add more by appending to the `tools` array in `src/index.ts` — each tool is
-just a name, a JSON Schema `inputSchema`, and an async `handler(args, env)`
-that calls `cfFetch()` (or `fetch()` directly for non-JSON endpoints like KV
-values) and returns plain data.
+## Verification
 
-## 5. Security notes
-
-- `MCP_AUTH_TOKEN` is the only thing standing between the internet and your
-  Cloudflare account. Rotate it (`wrangler secret put MCP_AUTH_TOKEN`) if it
-  ever leaks.
-- Scope the underlying `CLOUDFLARE_API_TOKEN` as narrowly as possible —
-  don't hand the Worker a token with more permissions than the tools you
-  actually want to expose need.
-- Everything is logged via Workers Logs (`observability.enabled` in
-  `wrangler.jsonc`) — check `wrangler tail` if a tool call misbehaves.
-- For a locked-down team deployment, swap the static-bearer-token check in
-  `fetch()` for real OAuth (e.g. Cloudflare Access, or the `agents` package's
-  `OAuthProvider`) — the static token is the simplest option for personal/
-  single-user use.
-
-## 6. Local testing
+Typecheck locally:
 
 ```bash
-npm run dev
-curl -X POST http://localhost:8787/mcp \
-  -H "Authorization: Bearer <your MCP_AUTH_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+npx tsc --noEmit
 ```
+
+The deployment workflow also runs `scripts/oauth_smoke.py` against the live Worker. The smoke test verifies:
+
+- OAuth protected-resource discovery
+- authorization-server discovery
+- Dynamic Client Registration
+- PKCE `S256`
+- explicit consent/approval page
+- authorization-code exchange
+- refresh-token grant
+- read-only OAuth `tools/list`
+- server-side blocking of write tools for OAuth clients
+- legacy owner-token compatibility
+- unauthenticated `401` with `WWW-Authenticate` resource metadata
+
+The smoke test never prints the owner secret or issued OAuth tokens.
+
+## Plugin package
+
+The repository also contains an OpenAI/Codex plugin package under `plugins/cf-control` and marketplace metadata under `.agents/plugins/marketplace.json`.
+
+The direct `.mcp.json` plugin package is useful for MCP-capable desktop environments. ChatGPT Web custom-app availability still depends on the account exposing Developer Mode / Custom MCP UI; the repository does not invent or hard-code a fake ChatGPT App ID.
+
+## Operational notes
+
+- Scope `CLOUDFLARE_API_TOKEN` to only the Cloudflare permissions required by the tools you intend to use.
+- Keep all secrets in Worker/GitHub secret stores, never in the repository.
+- The OAuth authorization artifacts are stateless and short-lived; PKCE binds authorization codes to the initiating client.
+- `MCP_AUTH_TOKEN` rotation is the emergency revocation mechanism for all client-side access.
+- Workers observability remains enabled in `wrangler.jsonc`.

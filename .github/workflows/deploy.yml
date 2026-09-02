@@ -20,6 +20,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Typecheck
+        run: npx tsc --noEmit
+
       - name: Resolve Cloudflare account ID
         id: account
         run: |
@@ -55,26 +58,14 @@ jobs:
           MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
           ACCOUNT_ID: ${{ steps.account.outputs.id }}
 
-      - name: Verify live endpoint
+      - name: Verify live OAuth and MCP flow
         if: steps.run.outputs.final_exit == '0'
         run: |
           {
-            echo "=== live verification ==="
-            echo "-- GET / --"
-            curl -s https://cf-control-mcp.amin-chinisaz-edu.workers.dev/
-            echo
-            echo "-- POST /mcp tools/list --"
-            curl -s -X POST https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp \
-              -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-            echo
-            echo "-- POST /mcp with WRONG token (should be 401) --"
-            curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp \
-              -H "Authorization: Bearer wrong-token" \
-              -H "Content-Type: application/json" \
-              -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+            echo "=== live OAuth/MCP verification ==="
+            MCP_BASE_URL="https://cf-control-mcp.amin-chinisaz-edu.workers.dev" python3 scripts/oauth_smoke.py
           } >> deploy.log 2>&1
+          cat deploy.log
         env:
           MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
 
