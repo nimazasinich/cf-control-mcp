@@ -1,5 +1,6 @@
 {
   "project": "APEX",
   "request_id": "apex-cp28-20260902-transport",
-  "reason": "Prepare an ephemeral encrypted transport key for the exact APEX v2.0.1 CP28 artifact before Cloudflare staging deployment."
+  "reason": "Prepare an ephemeral encrypted transport key for the exact APEX v2.0.1 CP28 artifact before Cloudflare staging deployment.",
+  "retry": 1
 }
