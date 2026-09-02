@@ -11,12 +11,12 @@
 
 
 Total Upload: 58.09 KiB / gzip: 14.48 KiB
-Worker Startup Time: 17 ms
+Worker Startup Time: 20 ms
 No bindings found.
-Uploaded cf-control-mcp (1.11 sec)
+Uploaded cf-control-mcp (1.44 sec)
 Deployed cf-control-mcp triggers (0.14 sec)
   https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-Current Version ID: 36621bae-26dd-4d54-b5c8-fb454337ac4b
+Current Version ID: c1f29402-665f-4c10-93c3-57a7df8f7e65
 
 Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
 deploy exit code: 0
@@ -59,14 +59,13 @@ deploy exit code: 0
 
 
 🌀 Creating the secret for the Worker "cf-control-mcp" 
-✨ Success! Uploaded secret CLOUDFLARE_ACCOUNT_ID
+
+[31m✘ [41;31m[[41;97mERROR[41;31m][0m [1mSecret edit failed. You attempted to modify a secret, but the latest version of your Worker isn't currently deployed. Please ensure that the latest version of your Worker is fully deployed (wrangler versions deploy) before modifying secrets. Alternatively, you can use the Cloudflare dashboard to modify secrets and deploy the version.[0m
+
+  
+  Note: This limitation will be addressed in an upcoming release.
+
+
+🪵  Logs were written to "/home/runner/.config/.wrangler/logs/wrangler-2026-09-02_04-13-11_054.log"
 === live OAuth/MCP verification ===
-Traceback (most recent call last):
-  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 335, in <module>
-    raise SystemExit(main())
-                     ^^^^^^
-  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 290, in main
-    fail("write tool was not blocked by the OAuth scope guard")
-  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 62, in fail
-    raise AssertionError(message)
-AssertionError: write tool was not blocked by the OAuth scope guard
+PASS: OAuth discovery, DCR, consent, PKCE, token exchange, refresh, read-only MCP scope, legacy path, and 401 challenge
