@@ -1,0 +1,98 @@
+name: APEX Secure Artifact Key
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'requests/apex-artifact-keys/*.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apex-artifact-key
+  cancel-in-progress: false
+
+jobs:
+  prepare-key:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate pending artifact transport keys
+        shell: bash
+        env:
+          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p state/apex-artifact-keys
+
+          for req in requests/apex-artifact-keys/*.json; do
+            request_id=$(python3 - "$req" <<'PY'
+import json, pathlib, sys
+p=pathlib.Path(sys.argv[1])
+d=json.loads(p.read_text())
+assert d.get('project') == 'APEX', 'project must be APEX'
+rid=d.get('request_id')
+assert isinstance(rid,str) and rid, 'request_id required'
+assert p.stem == rid, 'filename/request_id mismatch'
+print(rid)
+PY
+)
+            out="state/apex-artifact-keys/${request_id}.json"
+            if [ -f "$out" ]; then
+              echo "Key state already exists for $request_id; skipping."
+              continue
+            fi
+
+            tmp=$(mktemp -d)
+            trap 'rm -rf "$tmp"' RETURN
+            openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out "$tmp/private.pem" >/dev/null 2>&1
+            openssl pkey -in "$tmp/private.pem" -pubout -out "$tmp/public.pem" >/dev/null 2>&1
+
+            enc_key=$(printf 'apex-artifact-enc:%s' "$MCP_AUTH_TOKEN" | sha256sum | awk '{print $1}')
+            mac_key=$(printf 'apex-artifact-mac:%s' "$MCP_AUTH_TOKEN" | sha256sum | awk '{print $1}')
+            iv=$(openssl rand -hex 16)
+            openssl enc -aes-256-cbc -K "$enc_key" -iv "$iv" -in "$tmp/private.pem" -out "$tmp/private.enc"
+            printf '%s' "$iv" > "$tmp/mac-input"
+            cat "$tmp/private.enc" >> "$tmp/mac-input"
+            mac=$(openssl dgst -sha256 -mac HMAC -macopt "hexkey:$mac_key" "$tmp/mac-input" | awk '{print $NF}')
+
+            REQUEST_ID="$request_id" IV="$iv" MAC="$mac" TMP="$tmp" python3 - <<'PY'
+import base64, json, os, pathlib, datetime
+p=pathlib.Path(os.environ['TMP'])
+out={
+  'project':'APEX',
+  'request_id':os.environ['REQUEST_ID'],
+  'created_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+  'algorithm':'RSA-4096-OAEP-SHA256',
+  'public_key_pem_b64':base64.b64encode((p/'public.pem').read_bytes()).decode(),
+  'private_key_cipher':'AES-256-CBC',
+  'private_key_iv_hex':os.environ['IV'],
+  'private_key_hmac_sha256':os.environ['MAC'],
+  'private_key_enc_b64':base64.b64encode((p/'private.enc').read_bytes()).decode(),
+}
+pathlib.Path(f"state/apex-artifact-keys/{os.environ['REQUEST_ID']}.json").write_text(json.dumps(out,indent=2)+'\n')
+PY
+            rm -rf "$tmp"
+            trap - RETURN
+          done
+
+      - name: Commit public/encrypted key state
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.email "actions@github.com"
+          git config user.name "apex-artifact-key"
+          git add state/apex-artifact-keys/ || true
+          if git diff --cached --quiet; then
+            echo "No new artifact key state."
+            exit 0
+          fi
+          git commit -m "chore(apex): record encrypted artifact transport key [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main
