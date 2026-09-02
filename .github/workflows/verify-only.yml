@@ -22,6 +22,18 @@ jobs:
               -H "Content-Type: application/json" \
               -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
             echo
+            echo "-- tools/call cf_list_zones --"
+            curl -s -X POST https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp \
+              -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"cf_list_zones","arguments":{}}}'
+            echo
+            echo "-- tools/call cf_list_workers --"
+            curl -s -X POST https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp \
+              -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"cf_list_workers","arguments":{}}}'
+            echo
           } > verify.log 2>&1
           cat verify.log
         env:
