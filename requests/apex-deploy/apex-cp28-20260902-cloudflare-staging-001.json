@@ -1,0 +1,12 @@
+{
+  "project": "APEX",
+  "request_id": "apex-cp28-20260902-cloudflare-staging-001",
+  "confirm_deploy": true,
+  "artifact_key_id": "apex-cp28-20260902-transport",
+  "artifact_name": "APEX-v2.0.1-CP28-SOURCE-VERIFIED-RELEASE-CANDIDATE.zip",
+  "artifact_sha256": "43c7e7212c845a4099861140415733debee38ebffc2d41ac26d7e2d7e5a2e10d",
+  "artifact_provenance": "Exact CP28 source candidate uploaded through the user-approved Dropbox file request; size 82304931 bytes.",
+  "artifact_url_ciphertext_b64": "Sk9+suegTrx34MNyQtFURpesf8OVOnpgBfIxdLHN4XmRiuYSTuX4Hv1EkW9n19Ryb9DactDKL+VpuGbNfKH5KIaEvD8Tw2X9Q/Peb1hP9tniMribmmIde38H2tuz1cyaDPLgUxIyV1N9IxbuzoCBbEeUGDKNg8faebiFNsk9uwyNRAJLMed2PnbdVAjw9CRCHrjmvpyNka0ikNHGC/aaHBm191Ix2wglBYES9AZrDT6VUR1GFvXRL+x3PnKZTgN2IrHT7ZGgmN2EDCdUMEfi69tRVOMpVhycIc7duc9cuRtasxmOOpsJi6wrjwqWKlgKFaf0tvt1RaEuVQRgM5oFIZSMOofjSL754Fp56STN9bEcadcgTDp7v/DxLZ9ux3gpIx2QgYn81RSiZsdGOWhlUQpIkg3jcRj+Am4giUIvennTm12CqgO/pszAxN0U3Xm99pUnQFevBZqqeTMB4jk++WyPnJoiAyd20+Vbs2sTh8gjR5+GKrPW9U+uzkQSh++rEGQyOdWSBCKD6gZsGJpBxrRx1gjfr+tzr6Ms/Xfp5FrbpqPweVQcB9+EhZb+n3UU5soCsLwmRs7wESBvu6X5K6+7FM5whJAv004SbyXE2NqsEbLj500EH+stshynfQm1Dz3WhRNqB0yVqn+unWTJLfS2Gm0e43QvAQ77Gm5Yzjg=",
+  "worker_name": "apex-cp28-staging",
+  "reason": "Verify, build, and deploy the exact APEX v2.0.1 CP28 full-project artifact to Cloudflare staging. Preserve fail-closed APEX safety invariants and do not enable autonomous live execution."
+}
