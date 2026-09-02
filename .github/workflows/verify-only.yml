@@ -1,0 +1,17 @@
+name: Verify only
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test /mcp with real token
+        run: |
+          curl -s -X POST https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp \
+            -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+        env:
+          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
