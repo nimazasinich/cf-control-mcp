@@ -1,0 +1,20 @@
+{
+  "name": "cf-control-mcp",
+  "interface": {
+    "displayName": "CF Control MCP"
+  },
+  "plugins": [
+    {
+      "name": "cf-control",
+      "source": {
+        "source": "local",
+        "path": "./plugins/cf-control"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

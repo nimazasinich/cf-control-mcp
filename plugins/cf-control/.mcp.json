@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cf_control": {
+      "type": "http",
+      "url": "https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp"
+    }
+  }
+}
