@@ -6,17 +6,20 @@ This plugin packages the `cf-control-mcp` remote MCP server for OpenAI plugin-co
 
 `https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp`
 
-The plugin does **not** contain credentials. The current MCP Worker protects `/mcp` with a bearer token, so a client must supply authentication out of band or the server must be upgraded to OAuth.
+The plugin contains no credentials. The Worker now supports OAuth discovery, Dynamic Client Registration, PKCE/S256, explicit owner approval, access tokens, and refresh tokens. OAuth clients receive only the read-only Cloudflare tool set.
+
+The original static `MCP_AUTH_TOKEN` bearer path remains available for trusted legacy/desktop clients and CI. Never commit that token into the plugin.
 
 ## Web compatibility
 
-OpenAI currently marks imported plugins that directly declare MCP servers in `.mcp.json` as **Desktop only**, even when the MCP server is a remote HTTPS endpoint. For ChatGPT Web, the supported route is an app-backed plugin: publish or enable a ChatGPT App for the MCP server, then reference that app from the plugin using `.app.json`.
+The MCP server itself is OAuth-ready for ChatGPT-compatible remote MCP clients. ChatGPT Web still requires the account/workspace to expose Developer Mode / Custom MCP configuration before this endpoint can be attached there.
 
-Do not add an `.app.json` placeholder: it must contain a real ChatGPT App ID that actually exists and is available to the target account/workspace.
+The direct plugin package declares the MCP endpoint in `.mcp.json`, so plugin-surface availability is determined by the OpenAI client/runtime. Do not add a fake `.app.json`; an app-backed plugin must reference a real ChatGPT App ID that actually exists and is enabled for the target account/workspace.
 
 ## Security
 
 - Never commit `MCP_AUTH_TOKEN` or `CLOUDFLARE_API_TOKEN`.
-- Prefer OAuth 2.1 for MCP client authorization if this integration will be installed through a UI.
+- OAuth authorization requires explicit owner approval and PKCE/S256.
+- OAuth clients are restricted to read-only tools server-side.
 - Keep Cloudflare API token scopes limited to the tools that are actually exposed.
-- Require user approval before destructive tools are invoked.
+- The legacy owner-token path can access destructive tools and must remain tightly protected.
