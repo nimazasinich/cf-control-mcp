@@ -2,6 +2,8 @@
 """End-to-end OAuth/MCP smoke test for cf-control-mcp.
 
 Requires MCP_AUTH_TOKEN in the environment. Never prints the secret or issued tokens.
+Uses the runner's curl binary so Cloudflare sees the same normal HTTP/TLS client that
+is used by the repository's other live endpoint checks.
 """
 from __future__ import annotations
 
@@ -11,10 +13,12 @@ import html.parser
 import json
 import os
 import secrets
+import subprocess
 import sys
-import urllib.error
+import tempfile
 import urllib.parse
-import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
 
 BASE_URL = os.environ.get("MCP_BASE_URL", "https://cf-control-mcp.amin-chinisaz-edu.workers.dev").rstrip("/")
 OWNER_TOKEN = os.environ.get("MCP_AUTH_TOKEN", "")
@@ -34,12 +38,11 @@ WRITE_TOOLS = {
 }
 
 
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
-NO_REDIRECT = urllib.request.build_opener(NoRedirect)
+@dataclass
+class HttpResponse:
+    status: int
+    headers: dict[str, str]
+    body: bytes
 
 
 class HiddenInputParser(html.parser.HTMLParser):
@@ -59,19 +62,82 @@ def fail(message: str) -> None:
     raise AssertionError(message)
 
 
-def request(path: str, *, method: str = "GET", headers: dict[str, str] | None = None, data: bytes | None = None, no_redirect: bool = False):
-    req = urllib.request.Request(BASE_URL + path, data=data, headers=headers or {}, method=method)
-    try:
-        if no_redirect:
-            return NO_REDIRECT.open(req, timeout=30)
-        return urllib.request.urlopen(req, timeout=30)
-    except urllib.error.HTTPError as exc:
-        if no_redirect and exc.code in (301, 302, 303, 307, 308):
-            return exc
-        raise
+def parse_last_header_block(raw: bytes) -> dict[str, str]:
+    text = raw.decode("iso-8859-1", errors="replace").replace("\r\n", "\n")
+    blocks = [block for block in text.split("\n\n") if block.lstrip().startswith("HTTP/")]
+    if not blocks:
+        return {}
+    headers: dict[str, str] = {}
+    for line in blocks[-1].splitlines()[1:]:
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        headers[key.strip().lower()] = value.strip()
+    return headers
 
 
-def request_json(path: str, *, method: str = "GET", headers: dict[str, str] | None = None, body=None, expected: int = 200):
+def request(
+    path: str,
+    *,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+    data: bytes | None = None,
+) -> HttpResponse:
+    with tempfile.TemporaryDirectory(prefix="cf-control-oauth-smoke-") as tmp:
+        header_path = Path(tmp) / "headers.txt"
+        body_path = Path(tmp) / "body.bin"
+        command = [
+            "curl",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            "30",
+            "--request",
+            method,
+            "--dump-header",
+            str(header_path),
+            "--output",
+            str(body_path),
+            "--write-out",
+            "%{http_code}",
+        ]
+        for key, value in (headers or {}).items():
+            command.extend(["--header", f"{key}: {value}"])
+        if data is not None:
+            command.extend(["--data-binary", "@-"])
+        command.append(BASE_URL + path)
+
+        proc = subprocess.run(
+            command,
+            input=data,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if proc.returncode != 0:
+            fail(
+                f"curl transport failed for {method} {path}: exit {proc.returncode}: "
+                f"{proc.stderr.decode(errors='replace')[:500]}"
+            )
+
+        status_text = proc.stdout.decode().strip()
+        if not status_text.isdigit():
+            fail(f"curl did not return a valid HTTP status for {method} {path}: {status_text!r}")
+        return HttpResponse(
+            status=int(status_text),
+            headers=parse_last_header_block(header_path.read_bytes()),
+            body=body_path.read_bytes(),
+        )
+
+
+def request_json(
+    path: str,
+    *,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+    body=None,
+    expected: int = 200,
+):
     hdrs = {"Accept": "application/json", **(headers or {})}
     data = None
     if body is not None:
@@ -80,17 +146,13 @@ def request_json(path: str, *, method: str = "GET", headers: dict[str, str] | No
         else:
             data = json.dumps(body).encode()
             hdrs.setdefault("Content-Type", "application/json")
-    try:
-        response = request(path, method=method, headers=hdrs, data=data)
-        status = response.status
-        raw = response.read()
-    except urllib.error.HTTPError as exc:
-        status = exc.code
-        raw = exc.read()
-        response = exc
-    if status != expected:
-        fail(f"{method} {path}: expected HTTP {expected}, got {status}: {raw[:500]!r}")
-    return json.loads(raw.decode()) if raw else None, response
+    response = request(path, method=method, headers=hdrs, data=data)
+    if response.status != expected:
+        fail(
+            f"{method} {path}: expected HTTP {expected}, got {response.status}: "
+            f"{response.body[:500]!r}"
+        )
+    return json.loads(response.body.decode()) if response.body else None, response
 
 
 def b64url(data: bytes) -> str:
@@ -149,7 +211,9 @@ def main() -> int:
         }
     )
     authorize = request("/authorize?" + query)
-    page = authorize.read().decode()
+    if authorize.status != 200:
+        fail(f"GET /authorize: expected HTTP 200, got {authorize.status}: {authorize.body[:500]!r}")
+    page = authorize.body.decode()
     if "Approve Cloudflare connection" not in page:
         fail("authorization page did not render the approval UI")
     parser = HiddenInputParser()
@@ -165,11 +229,10 @@ def main() -> int:
         method="POST",
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         data=approval_body,
-        no_redirect=True,
     )
-    if approval.code != 302:
-        fail(f"approval did not redirect with an authorization code (HTTP {approval.code})")
-    location = approval.headers.get("Location", "")
+    if approval.status != 302:
+        fail(f"approval did not redirect with an authorization code (HTTP {approval.status})")
+    location = approval.headers.get("location", "")
     parsed_location = urllib.parse.urlparse(location)
     query_params = urllib.parse.parse_qs(parsed_location.query)
     code = query_params.get("code", [None])[0]
@@ -252,20 +315,17 @@ def main() -> int:
     if not WRITE_TOOLS.issubset(legacy_tools):
         fail("legacy owner-token path no longer exposes the existing write tools")
 
-    try:
-        request(
-            "/mcp",
-            method="POST",
-            headers={"Content-Type": "application/json"},
-            data=json.dumps(tools_body).encode(),
-        )
-        fail("unauthenticated MCP request unexpectedly succeeded")
-    except urllib.error.HTTPError as exc:
-        if exc.code != 401:
-            fail(f"unauthenticated MCP request returned HTTP {exc.code}, expected 401")
-        challenge_header = exc.headers.get("WWW-Authenticate", "")
-        if "oauth-protected-resource" not in challenge_header:
-            fail("401 response does not advertise OAuth protected-resource metadata")
+    unauthenticated = request(
+        "/mcp",
+        method="POST",
+        headers={"Content-Type": "application/json"},
+        data=json.dumps(tools_body).encode(),
+    )
+    if unauthenticated.status != 401:
+        fail(f"unauthenticated MCP request returned HTTP {unauthenticated.status}, expected 401")
+    challenge_header = unauthenticated.headers.get("www-authenticate", "")
+    if "oauth-protected-resource" not in challenge_header:
+        fail("401 response does not advertise OAuth protected-resource metadata")
 
     print("PASS: OAuth discovery, DCR, consent, PKCE, token exchange, refresh, read-only MCP scope, legacy path, and 401 challenge")
     return 0
