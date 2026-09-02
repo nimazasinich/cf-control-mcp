@@ -7,22 +7,14 @@ import legacyWorker, { type Env } from "./index";
  * - Keep the existing static MCP_AUTH_TOKEN path working for legacy/desktop clients.
  * - Offer standards-based OAuth discovery, dynamic client registration, PKCE/S256,
  *   explicit human consent, access tokens, and refresh tokens.
- * - Restrict OAuth-connected clients to read-only Cloudflare tools so ChatGPT Pro
- *   can scan and use the MCP without exposing write/modify actions.
+ * - OAuth-connected clients get the same full read/write/destructive access as
+ *   the legacy static-token path, once the owner approves the connection via
+ *   the /authorize consent page (which states this plainly).
  *
  * The existing MCP_AUTH_TOKEN is used only as the owner's approval secret and as
  * the HMAC root key for stateless OAuth artifacts. Rotating MCP_AUTH_TOKEN revokes
  * all registered clients, authorization codes, access tokens, and refresh tokens.
  */
-
-const READ_ONLY_TOOLS = new Set([
-  "cf_list_zones",
-  "cf_list_dns_records",
-  "cf_list_workers",
-  "cf_get_worker_metadata",
-  "cf_kv_list_namespaces",
-  "cf_kv_get_value",
-]);
 
 const OAUTH_SCOPES = ["mcp:read", "offline_access"] as const;
 const ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
@@ -377,7 +369,7 @@ function consentPage(clientName: string, redirectUri: string, scope: string, for
 <body>
 <main class="card">
 <h1>Approve Cloudflare connection</h1>
-<p><strong>${escapeHtml(clientName)}</strong> is requesting read-only access to your private CF Control MCP server.</p>
+<p><strong>${escapeHtml(clientName)}</strong> is requesting full read/write access to your private CF Control MCP server, including destructive actions (delete DNS records, purge cache, modify Workers/KV, and arbitrary Cloudflare API calls).</p>
 ${errorMarkup}
 <div class="meta"><strong>Redirect URI</strong><code>${escapeHtml(redirectUri)}</code></div>
 <div class="meta"><strong>Scopes</strong><ul>${scopeRows}</ul></div>
@@ -579,84 +571,26 @@ function oauthUnauthorized(origin: string): Response {
   );
 }
 
-function containsWriteToolCall(payload: unknown): string | null {
-  const items = Array.isArray(payload) ? payload : [payload];
-  for (const item of items) {
-    if (!item || typeof item !== "object") continue;
-    const req = item as { method?: unknown; params?: { name?: unknown } };
-    if (req.method === "tools/call" && typeof req.params?.name === "string" && !READ_ONLY_TOOLS.has(req.params.name)) {
-      return req.params.name;
-    }
-  }
-  return null;
-}
-
-function filterToolsListBody(body: unknown): unknown {
-  const filterOne = (value: unknown): unknown => {
-    if (!value || typeof value !== "object") return value;
-    const obj = value as Record<string, unknown>;
-    const result = obj.result;
-    if (!result || typeof result !== "object") return value;
-    const resultObj = result as Record<string, unknown>;
-    if (!Array.isArray(resultObj.tools)) return value;
-    return {
-      ...obj,
-      result: {
-        ...resultObj,
-        tools: resultObj.tools.filter((tool) => {
-          if (!tool || typeof tool !== "object") return false;
-          const name = (tool as Record<string, unknown>).name;
-          return typeof name === "string" && READ_ONLY_TOOLS.has(name);
-        }),
-      },
-    };
-  };
-
-  return Array.isArray(body) ? body.map(filterOne) : filterOne(body);
-}
-
 async function proxyMcp(request: Request, env: Env, origin: string): Promise<Response> {
   const auth = await authenticateMcp(request, env, origin);
   if (!auth) return oauthUnauthorized(origin);
+  // Both legacy (static token) and oauth (dynamically issued access token)
+  // clients get full, unrestricted tool access once authenticated — no
+  // read-only filtering or write-call blocking. The owner-approval step in
+  // /authorize (consent page) is the actual gate: nothing gets an OAuth
+  // token without the owner typing the approval token in, and that consent
+  // page now says plainly that full read/write access — including
+  // destructive actions — is being granted.
   if (auth.mode === "legacy") return legacyWorker.fetch(request, env);
 
-  let payload: unknown;
-  try {
-    payload = await request.clone().json();
-  } catch {
-    // Let the legacy handler produce the canonical JSON-RPC parse error.
-  }
-
-  const blockedTool = containsWriteToolCall(payload);
-  if (blockedTool) {
-    return json({
-      jsonrpc: "2.0",
-      id: (payload as { id?: unknown } | null)?.id ?? null,
-      error: {
-        code: -32600,
-        message: `Tool ${blockedTool} is not available through the read-only OAuth scope.`,
-      },
-    });
-  }
-
+  // For OAuth mode, the request's Authorization header carries the signed
+  // OAuth access token, not the raw MCP_AUTH_TOKEN secret. The inner legacy
+  // worker only knows how to check a bearer against env.MCP_AUTH_TOKEN, so
+  // swap that in for this call so its check passes.
   const authorization = request.headers.get("Authorization") ?? "";
   const bearer = authorization.replace(/^Bearer\s+/i, "");
   const legacyEnv: Env = { ...env, MCP_AUTH_TOKEN: bearer };
-  const response = await legacyWorker.fetch(request, legacyEnv);
-
-  if (!payload) return response;
-  const items = Array.isArray(payload) ? payload : [payload];
-  const hasToolsList = items.some((item) => !!item && typeof item === "object" && (item as { method?: unknown }).method === "tools/list");
-  if (!hasToolsList || !response.ok || !(response.headers.get("content-type") ?? "").includes("application/json")) return response;
-
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    return response;
-  }
-
-  return json(filterToolsListBody(body), response.status);
+  return legacyWorker.fetch(request, legacyEnv);
 }
 
 export default {
