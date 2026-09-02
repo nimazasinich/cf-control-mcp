@@ -1,0 +1,29 @@
+{
+  "project": "APEX",
+  "request_id": "apex-cp28-20260902-cloudflare-staging-001",
+  "ok": false,
+  "executed_at": "2026-09-02T06:39:08.356308+00:00",
+  "artifact": {
+    "name": "APEX-v2.0.1-CP28-SOURCE-VERIFIED-RELEASE-CANDIDATE.zip",
+    "sha256": "43c7e7212c845a4099861140415733debee38ebffc2d41ac26d7e2d7e5a2e10d",
+    "provenance": "Exact CP28 source candidate uploaded through the user-approved Dropbox file request; size 82304931 bytes."
+  },
+  "worker_name": "apex-cp28-staging",
+  "live_url": null,
+  "live_http_status": null,
+  "extracted_file_count": 1756,
+  "steps": {
+    "artifact_download": 0,
+    "source_verify_build": 0,
+    "container_harness": 0,
+    "account_resolution": 0,
+    "cloudflare_deploy": 1,
+    "live_probe": null
+  },
+  "security": {
+    "deployment_profile": "production",
+    "operator_token_configured": false,
+    "mutating_api_without_operator_token": "fail-closed",
+    "autonomous_live_execution": "not enabled by deployment pipeline"
+  }
+}
