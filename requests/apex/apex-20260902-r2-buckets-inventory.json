@@ -1,0 +1,7 @@
+{
+  "project": "APEX",
+  "request_id": "apex-20260902-r2-buckets-inventory",
+  "method": "GET",
+  "path": "/accounts/{account_id}/r2/buckets",
+  "reason": "Inspect available Cloudflare R2 buckets before uploading the exact APEX CP28 source artifact. Read-only inventory; no resource mutation."
+}
