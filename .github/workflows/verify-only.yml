@@ -14,6 +14,8 @@ jobs:
       - name: Test /mcp with real token
         run: |
           {
+            echo "MCP_AUTH_TOKEN set: $([ -n "$MCP_AUTH_TOKEN" ] && echo yes || echo no)"
+            echo "CLOUDFLARE_API_TOKEN set: $([ -n "$CLOUDFLARE_API_TOKEN" ] && echo yes || echo no)"
             echo "token length: ${#MCP_AUTH_TOKEN}"
             curl -s -X POST https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp \
               -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
@@ -24,6 +26,7 @@ jobs:
           cat verify.log
         env:
           MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - name: Commit result
         run: |
           git config user.email "actions@github.com"
