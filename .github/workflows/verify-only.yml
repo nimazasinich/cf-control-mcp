@@ -3,15 +3,31 @@ name: Verify only
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - name: Test /mcp with real token
         run: |
-          curl -s -X POST https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp \
-            -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+          {
+            echo "token length: ${#MCP_AUTH_TOKEN}"
+            curl -s -X POST https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp \
+              -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+            echo
+          } > verify.log 2>&1
+          cat verify.log
         env:
           MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+      - name: Commit result
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "verify-bot"
+          git add -f verify.log
+          git commit -m "chore: verify log [skip ci]" || echo "nothing to commit"
+          git push || echo "push failed"
