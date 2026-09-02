@@ -25,5 +25,5 @@ jobs:
       - name: Typecheck Worker
         run: npx tsc --noEmit
 
-      - name: Validate OAuth smoke-test script
-        run: python3 -m py_compile scripts/oauth_smoke.py
+      - name: Validate Python verification and bridge scripts
+        run: python3 -m py_compile scripts/oauth_smoke.py scripts/apex_cf_bridge.py
