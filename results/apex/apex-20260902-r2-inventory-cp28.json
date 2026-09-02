@@ -1,0 +1,27 @@
+{
+  "request_id": "apex-20260902-r2-inventory-cp28",
+  "project": "APEX",
+  "ok": false,
+  "executed_at": "2026-09-02T05:47:04.978270Z",
+  "http": {
+    "method": "GET",
+    "path": "/accounts/324f9984b34bf5d39a778c9753c49632/r2/buckets",
+    "status": 403
+  },
+  "reason": "Inspect Cloudflare R2 buckets before storing the exact APEX v2.0.1 CP28 full-project ZIP for staging deployment.",
+  "response": {
+    "success": false,
+    "errors": [
+      {
+        "code": 10042,
+        "message": "Please enable R2 through the Cloudflare Dashboard."
+      }
+    ],
+    "messages": [],
+    "result": null
+  },
+  "response_meta": {
+    "content_type": "application/json; charset=UTF-8",
+    "cf_ray": "a34a37cadfb6abce-IAD"
+  }
+}
