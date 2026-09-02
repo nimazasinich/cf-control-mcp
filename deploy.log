@@ -11,12 +11,12 @@
 
 
 Total Upload: 33.83 KiB / gzip: 8.21 KiB
-Worker Startup Time: 18 ms
+Worker Startup Time: 16 ms
 No bindings found.
-Uploaded cf-control-mcp (0.80 sec)
-Deployed cf-control-mcp triggers (1.60 sec)
+Uploaded cf-control-mcp (2.14 sec)
+Deployed cf-control-mcp triggers (0.17 sec)
   https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-Current Version ID: 05413da5-1301-4216-9a22-a7b654bc67b9
+Current Version ID: 0c49441b-3481-4ef4-b1f3-c8107f6da2ef
 
 Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
 deploy exit code: 0
@@ -60,3 +60,10 @@ deploy exit code: 0
 
 🌀 Creating the secret for the Worker "cf-control-mcp" 
 ✨ Success! Uploaded secret CLOUDFLARE_ACCOUNT_ID
+=== live verification ===
+-- GET / --
+{"name":"cf-control-mcp","description":"Remote MCP server for controlling a Cloudflare account. POST MCP JSON-RPC requests to /mcp.","mcp_endpoint":"https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp"}
+-- POST /mcp tools/list --
+{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Unauthorized"}}
+-- POST /mcp with WRONG token (should be 401) --
+HTTP 401
