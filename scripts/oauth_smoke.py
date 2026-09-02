@@ -269,13 +269,22 @@ def main() -> int:
         headers={"Authorization": "Bearer " + access_token},
         body=tools_body,
     )
+    # OAuth-connected clients are intentionally granted the same full tool
+    # access as the legacy owner-token path (design decision: owner approval
+    # in /authorize is the gate, not a permanent read-only scope). Verify the
+    # write tools are present and reachable, without actually invoking a
+    # destructive one from CI.
     oauth_tools = {tool["name"] for tool in tools_response["result"]["tools"]}
-    if oauth_tools != READ_ONLY_TOOLS:
-        fail(f"OAuth tools/list mismatch: {sorted(oauth_tools)}")
-    if oauth_tools & WRITE_TOOLS:
-        fail("write tools leaked into the read-only OAuth connection")
+    if not WRITE_TOOLS.issubset(oauth_tools) or "cf_api_request" not in oauth_tools:
+        fail(f"OAuth tools/list is missing full write access: {sorted(oauth_tools)}")
+    if not READ_ONLY_TOOLS.issubset(oauth_tools):
+        fail(f"OAuth tools/list is missing read tools: {sorted(oauth_tools)}")
 
-    blocked, _ = request_json(
+    # Confirm a write-capable tool call actually executes for an OAuth token
+    # (no "read-only OAuth scope" guard error) using a harmless read-only
+    # Cloudflare API call routed through the newly-added generic passthrough
+    # tool, so nothing is mutated by this check.
+    passthrough, _ = request_json(
         "/mcp",
         method="POST",
         headers={"Authorization": "Bearer " + access_token},
@@ -283,11 +292,13 @@ def main() -> int:
             "jsonrpc": "2.0",
             "id": 2,
             "method": "tools/call",
-            "params": {"name": "cf_create_dns_record", "arguments": {}},
+            "params": {"name": "cf_api_request", "arguments": {"method": "GET", "path": "/zones"}},
         },
     )
-    if "read-only OAuth scope" not in blocked.get("error", {}).get("message", ""):
-        fail("write tool was not blocked by the OAuth scope guard")
+    if passthrough.get("result", {}).get("isError"):
+        fail(f"cf_api_request via OAuth token failed: {passthrough}")
+    if "read-only OAuth scope" in json.dumps(passthrough):
+        fail("OAuth token was unexpectedly blocked by a leftover read-only scope guard")
 
     refresh_body = urllib.parse.urlencode(
         {
