@@ -1,0 +1,7 @@
+{
+  "project": "APEX",
+  "request_id": "apex-20260902-r2-inventory-cp28",
+  "method": "GET",
+  "path": "/accounts/{account_id}/r2/buckets",
+  "reason": "Inspect Cloudflare R2 buckets before storing the exact APEX v2.0.1 CP28 full-project ZIP for staging deployment."
+}
