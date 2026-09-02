@@ -1,0 +1,387 @@
+name: APEX CP28 Exact-Artifact Cloudflare Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'requests/apex-deploy/*.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apex-cp28-cloudflare-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Select pending request
+        id: request
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p results/apex-deploy
+          req=$(python3 - <<'PY'
+import pathlib, json
+for p in sorted(pathlib.Path('requests/apex-deploy').glob('*.json')):
+    out=pathlib.Path('results/apex-deploy')/p.name
+    if out.exists():
+        continue
+    d=json.loads(p.read_text())
+    assert d.get('project') == 'APEX'
+    assert d.get('request_id') == p.stem
+    assert d.get('confirm_deploy') is True
+    print(p)
+    break
+PY
+)
+          test -n "$req"
+          echo "file=$req" >> "$GITHUB_OUTPUT"
+          python3 - "$req" >> "$GITHUB_OUTPUT" <<'PY'
+import json, pathlib, re, sys
+p=pathlib.Path(sys.argv[1]); d=json.loads(p.read_text())
+def out(k,v):
+    print(f'{k}={v}')
+rid=d['request_id']; key=d['artifact_key_id']; sha=d['artifact_sha256'].lower(); worker=d.get('worker_name','apex-cp28-staging')
+assert re.fullmatch(r'[a-f0-9]{64}',sha), 'artifact_sha256 must be sha256 hex'
+assert re.fullmatch(r'[a-z0-9-]{1,63}',worker), 'invalid worker_name'
+assert isinstance(d.get('artifact_url_ciphertext_b64'),str) and d['artifact_url_ciphertext_b64']
+out('request_id',rid); out('artifact_key_id',key); out('artifact_sha256',sha); out('worker_name',worker)
+PY
+
+      - name: Decrypt one-time artifact URL and download exact ZIP
+        id: artifact
+        continue-on-error: true
+        shell: bash
+        env:
+          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+        run: |
+          set +e
+          req='${{ steps.request.outputs.file }}'
+          key_id='${{ steps.request.outputs.artifact_key_id }}'
+          state="state/apex-artifact-keys/${key_id}.json"
+          work=$(mktemp -d)
+          python3 - "$state" "$req" "$work" <<'PY'
+import base64,json,pathlib,sys
+state=json.loads(pathlib.Path(sys.argv[1]).read_text()); req=json.loads(pathlib.Path(sys.argv[2]).read_text()); w=pathlib.Path(sys.argv[3])
+(w/'private.enc').write_bytes(base64.b64decode(state['private_key_enc_b64']))
+(w/'url.enc').write_bytes(base64.b64decode(req['artifact_url_ciphertext_b64']))
+(w/'meta.json').write_text(json.dumps({'iv':state['private_key_iv_hex'],'mac':state['private_key_hmac_sha256']}))
+PY
+          iv=$(python3 -c "import json;print(json.load(open('$work/meta.json'))['iv'])")
+          expected_mac=$(python3 -c "import json;print(json.load(open('$work/meta.json'))['mac'])")
+          enc_key=$(printf 'apex-artifact-enc:%s' "$MCP_AUTH_TOKEN" | sha256sum | awk '{print $1}')
+          mac_key=$(printf 'apex-artifact-mac:%s' "$MCP_AUTH_TOKEN" | sha256sum | awk '{print $1}')
+          printf '%s' "$iv" > "$work/mac-input"
+          cat "$work/private.enc" >> "$work/mac-input"
+          actual_mac=$(openssl dgst -sha256 -mac HMAC -macopt "hexkey:$mac_key" "$work/mac-input" | awk '{print $NF}')
+          if [ "$actual_mac" != "$expected_mac" ]; then
+            echo "Encrypted private-key integrity check failed."
+            echo "exit_code=41" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          openssl enc -d -aes-256-cbc -K "$enc_key" -iv "$iv" -in "$work/private.enc" -out "$work/private.pem"
+          openssl pkeyutl -decrypt -inkey "$work/private.pem" -in "$work/url.enc" \
+            -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -pkeyopt rsa_mgf1_md:sha256 \
+            -out "$work/url.txt"
+          artifact_url=$(cat "$work/url.txt")
+          rm -f "$work/url.txt"
+          curl --fail --silent --show-error --location --output /tmp/apex-cp28.zip "$artifact_url"
+          code=$?
+          unset artifact_url
+          rm -rf "$work"
+          if [ "$code" -ne 0 ]; then
+            echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          actual_sha=$(sha256sum /tmp/apex-cp28.zip | awk '{print $1}')
+          if [ "$actual_sha" != '${{ steps.request.outputs.artifact_sha256 }}' ]; then
+            echo "Artifact SHA mismatch."
+            rm -f /tmp/apex-cp28.zip
+            echo "exit_code=42" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "exit_code=0" >> "$GITHUB_OUTPUT"
+          echo "sha256=$actual_sha" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Verify and build exact APEX source
+        id: build
+        if: steps.artifact.outputs.exit_code == '0'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          rm -rf /tmp/apex-cp28-src
+          mkdir -p /tmp/apex-cp28-src
+          python3 - <<'PY'
+import pathlib, zipfile
+z=pathlib.Path('/tmp/apex-cp28.zip'); root=pathlib.Path('/tmp/apex-cp28-src').resolve()
+with zipfile.ZipFile(z) as f:
+    for info in f.infolist():
+        target=(root/info.filename).resolve()
+        if root != target and root not in target.parents:
+            raise SystemExit(f'unsafe zip path: {info.filename}')
+    f.extractall(root)
+PY
+          cd /tmp/apex-cp28-src
+          test "$(cat VERSION | tr -d '\r\n')" = "2.0.1" || exit 51
+          npm ci || exit 52
+          npm run lint || exit 53
+          npm run release:gate:source || exit 54
+          npm run check:root-contract || exit 55
+          npm run check:version-identity || exit 56
+          npm run check:api-contract || exit 57
+          npm run qa:app-index || exit 58
+          npm run qa:smart-autopilot || exit 59
+          npm run qa:unified-safety-runtime || exit 60
+          npm run build || exit 61
+          test -f dist/server.cjs || exit 62
+          test -f dist/index.html || exit 63
+          file_count=$(find . -type f | wc -l | tr -d ' ')
+          echo "file_count=$file_count" >> "$GITHUB_OUTPUT"
+          echo "exit_code=0" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Prepare full-project Cloudflare Container harness
+        id: harness
+        if: steps.build.outputs.exit_code == '0'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          cd /tmp/apex-cp28-src
+          mkdir -p .cloudflare
+          cat > Dockerfile.cloudflare <<'EOF'
+FROM node:22-bookworm
+WORKDIR /app
+COPY . .
+RUN npm ci && npm run build && npm prune --omit=dev
+ENV NODE_ENV=production
+ENV PORT=8080
+ENV HOST=0.0.0.0
+ENV APEX_SERVE_DIST=1
+ENV APEX_DEPLOYMENT_PROFILE=production
+EXPOSE 8080
+CMD ["npm","start"]
+EOF
+          cat > .dockerignore <<'EOF'
+node_modules
+_release
+.git
+EOF
+          cat > .cloudflare/apex-worker.ts <<'EOF'
+import { Container } from '@cloudflare/containers';
+
+export class ApexContainer extends Container {
+  defaultPort = 8080;
+  sleepAfter = '30m';
+  envVars = {
+    NODE_ENV: 'production',
+    PORT: '8080',
+    HOST: '0.0.0.0',
+    APEX_SERVE_DIST: '1',
+    APEX_DEPLOYMENT_PROFILE: 'production',
+  };
+}
+
+export default {
+  async fetch(request: Request, env: any): Promise<Response> {
+    const container = env.APEX_CONTAINER.getByName('apex-cp28-primary');
+    return container.fetch(request);
+  },
+};
+EOF
+          cat > wrangler.apex.jsonc <<EOF
+{
+  "name": "${{ steps.request.outputs.worker_name }}",
+  "main": ".cloudflare/apex-worker.ts",
+  "compatibility_date": "2026-09-02",
+  "containers": [
+    {
+      "max_instances": 1,
+      "class_name": "ApexContainer",
+      "image": "./Dockerfile.cloudflare"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "APEX_CONTAINER",
+        "class_name": "ApexContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ApexContainer"]
+    }
+  ]
+}
+EOF
+          npm install --no-save --package-lock=false @cloudflare/containers wrangler@latest || exit 71
+          echo "exit_code=0" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Resolve Cloudflare account ID
+        id: account
+        if: steps.harness.outputs.exit_code == '0'
+        continue-on-error: true
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set +e
+          response=$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Accept: application/json" "https://api.cloudflare.com/client/v4/accounts?per_page=1") || { echo "exit_code=81" >> "$GITHUB_OUTPUT"; exit 0; }
+          account_id=$(printf '%s' "$response" | python3 -c "import json,sys;d=json.load(sys.stdin);assert d.get('success') is True and d.get('result');print(d['result'][0]['id'])") || { echo "exit_code=82" >> "$GITHUB_OUTPUT"; exit 0; }
+          echo "id=$account_id" >> "$GITHUB_OUTPUT"
+          echo "exit_code=0" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Deploy complete APEX project to Cloudflare Containers
+        id: cloudflare
+        if: steps.account.outputs.exit_code == '0'
+        continue-on-error: true
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.account.outputs.id }}
+        run: |
+          set +e
+          cd /tmp/apex-cp28-src
+          npx wrangler deploy --config wrangler.apex.jsonc > /tmp/apex-cloudflare-deploy.log 2>&1
+          code=$?
+          cat /tmp/apex-cloudflare-deploy.log
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -eq 0 ]; then
+            url=$(grep -Eo 'https://[A-Za-z0-9._-]+\.workers\.dev' /tmp/apex-cloudflare-deploy.log | tail -1 || true)
+            if [ -n "$url" ]; then echo "url=$url" >> "$GITHUB_OUTPUT"; fi
+          fi
+          exit 0
+
+      - name: Verify live staging URL
+        id: live
+        if: steps.cloudflare.outputs.exit_code == '0'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          url='${{ steps.cloudflare.outputs.url }}'
+          if [ -z "$url" ]; then
+            echo "exit_code=91" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ok=0
+          for i in $(seq 1 36); do
+            code=$(curl -sS -o /tmp/apex-live-body -w '%{http_code}' "$url/" || true)
+            if [ "$code" -ge 200 ] && [ "$code" -lt 500 ]; then
+              ok=1
+              break
+            fi
+            sleep 10
+          done
+          if [ "$ok" -eq 1 ]; then
+            echo "exit_code=0" >> "$GITHUB_OUTPUT"
+            echo "http_status=$code" >> "$GITHUB_OUTPUT"
+          else
+            echo "exit_code=92" >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
+
+      - name: Write sanitized deployment result
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          req='${{ steps.request.outputs.file }}'
+          rid='${{ steps.request.outputs.request_id }}'
+          mkdir -p results/apex-deploy
+          REQUEST_FILE="$req" REQUEST_ID="$rid" \
+          ARTIFACT_EXIT='${{ steps.artifact.outputs.exit_code }}' \
+          BUILD_EXIT='${{ steps.build.outputs.exit_code }}' \
+          HARNESS_EXIT='${{ steps.harness.outputs.exit_code }}' \
+          ACCOUNT_EXIT='${{ steps.account.outputs.exit_code }}' \
+          CLOUDFLARE_EXIT='${{ steps.cloudflare.outputs.exit_code }}' \
+          LIVE_EXIT='${{ steps.live.outputs.exit_code }}' \
+          LIVE_URL='${{ steps.cloudflare.outputs.url }}' \
+          LIVE_HTTP='${{ steps.live.outputs.http_status }}' \
+          FILE_COUNT='${{ steps.build.outputs.file_count }}' \
+          python3 - <<'PY'
+import datetime,json,os,pathlib
+req=json.loads(pathlib.Path(os.environ['REQUEST_FILE']).read_text())
+def val(name):
+    v=os.environ.get(name,'')
+    return int(v) if v.isdigit() else None
+steps={
+  'artifact_download':val('ARTIFACT_EXIT'),
+  'source_verify_build':val('BUILD_EXIT'),
+  'container_harness':val('HARNESS_EXIT'),
+  'account_resolution':val('ACCOUNT_EXIT'),
+  'cloudflare_deploy':val('CLOUDFLARE_EXIT'),
+  'live_probe':val('LIVE_EXIT'),
+}
+ok=all(v == 0 for v in steps.values())
+out={
+  'project':'APEX',
+  'request_id':os.environ['REQUEST_ID'],
+  'ok':ok,
+  'executed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+  'artifact':{
+    'name':req.get('artifact_name'),
+    'sha256':req.get('artifact_sha256'),
+    'provenance':req.get('artifact_provenance'),
+  },
+  'worker_name':req.get('worker_name','apex-cp28-staging'),
+  'live_url':os.environ.get('LIVE_URL') or None,
+  'live_http_status':int(os.environ['LIVE_HTTP']) if os.environ.get('LIVE_HTTP','').isdigit() else None,
+  'extracted_file_count':int(os.environ['FILE_COUNT']) if os.environ.get('FILE_COUNT','').isdigit() else None,
+  'steps':steps,
+  'security':{
+    'deployment_profile':'production',
+    'operator_token_configured':False,
+    'mutating_api_without_operator_token':'fail-closed',
+    'autonomous_live_execution':'not enabled by deployment pipeline',
+  },
+}
+pathlib.Path(f"results/apex-deploy/{os.environ['REQUEST_ID']}.json").write_text(json.dumps(out,indent=2)+'\n')
+PY
+
+      - name: Commit sanitized deployment result
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.email "actions@github.com"
+          git config user.name "apex-cloudflare-deploy"
+          git add results/apex-deploy/ || true
+          if git diff --cached --quiet; then
+            echo "No deployment result to commit."
+            exit 0
+          fi
+          git commit -m "chore(apex): record CP28 Cloudflare deployment result [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+      - name: Enforce deployment result
+        if: always()
+        shell: bash
+        run: |
+          test '${{ steps.artifact.outputs.exit_code }}' = '0'
+          test '${{ steps.build.outputs.exit_code }}' = '0'
+          test '${{ steps.harness.outputs.exit_code }}' = '0'
+          test '${{ steps.account.outputs.exit_code }}' = '0'
+          test '${{ steps.cloudflare.outputs.exit_code }}' = '0'
+          test '${{ steps.live.outputs.exit_code }}' = '0'
