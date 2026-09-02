@@ -1,0 +1,27 @@
+{
+  "request_id": "apex-20260902-r2-buckets-inventory",
+  "project": "APEX",
+  "ok": false,
+  "executed_at": "2026-09-02T05:43:44.234757Z",
+  "http": {
+    "method": "GET",
+    "path": "/accounts/324f9984b34bf5d39a778c9753c49632/r2/buckets",
+    "status": 403
+  },
+  "reason": "Inspect available Cloudflare R2 buckets before uploading the exact APEX CP28 source artifact. Read-only inventory; no resource mutation.",
+  "response": {
+    "success": false,
+    "errors": [
+      {
+        "code": 10042,
+        "message": "Please enable R2 through the Cloudflare Dashboard."
+      }
+    ],
+    "messages": [],
+    "result": null
+  },
+  "response_meta": {
+    "content_type": "application/json; charset=UTF-8",
+    "cf_ray": "a34a32e3cf20d6db-IAD"
+  }
+}
