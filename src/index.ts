@@ -106,6 +106,42 @@ async function cfFetch(env: Env, path: string, init: RequestInit = {}): Promise<
 
 const tools: ToolDef[] = [
 	{
+		name: "cf_api_request",
+		description:
+			"Call any Cloudflare API v4 endpoint directly, with any HTTP method. Use this for anything not covered " +
+			"by the other specific tools (zone settings, SSL/TLS, WAF/firewall rules, Access policies, R2, D1, " +
+			"Workers KV, Stream, Images, Load Balancing, Pages, account members, billing, etc). " +
+			"Path is relative to https://api.cloudflare.com/client/v4, e.g. '/zones/{zone_id}/settings/ssl'. " +
+			"This has full read/write/delete power over the Cloudflare account tied to CLOUDFLARE_API_TOKEN.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				method: { type: "string", description: "HTTP method: GET, POST, PUT, PATCH, DELETE" },
+				path: { type: "string", description: "API path starting with '/', e.g. '/zones'" },
+				body: { type: "object", description: "JSON body for POST/PUT/PATCH. Omit for GET/DELETE." },
+				query: { type: "object", description: "Optional query string params as key/value pairs." },
+			},
+			required: ["method", "path"],
+		},
+		annotations: { destructiveHint: true, openWorldHint: true },
+		handler: async (args, env) => {
+			let path = String(args.path);
+			if (!path.startsWith("/")) path = "/" + path;
+			if (args.query && typeof args.query === "object") {
+				const qs = new URLSearchParams();
+				for (const [k, v] of Object.entries(args.query as Record<string, unknown>)) qs.set(k, String(v));
+				const sep = path.includes("?") ? "&" : "?";
+				path = `${path}${sep}${qs.toString()}`;
+			}
+			const method = String(args.method || "GET").toUpperCase();
+			const init: RequestInit = { method };
+			if (args.body !== undefined && method !== "GET" && method !== "DELETE") {
+				init.body = JSON.stringify(args.body);
+			}
+			return await cfFetch(env, path, init);
+		},
+	},
+	{
 		name: "cf_list_zones",
 		description:
 			"List Cloudflare zones (domains) on this account. Optionally filter by name (exact or partial match).",
