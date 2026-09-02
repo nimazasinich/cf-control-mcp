@@ -1,2 +1,4 @@
+MCP_AUTH_TOKEN set: no
+CLOUDFLARE_API_TOKEN set: yes
 token length: 0
 {"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Unauthorized"}}
