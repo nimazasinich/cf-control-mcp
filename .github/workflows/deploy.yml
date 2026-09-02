@@ -5,11 +5,20 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm install
 
       - name: Resolve Cloudflare account ID
         id: account
@@ -21,19 +30,40 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-      - name: Deploy Worker
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ steps.account.outputs.id }}
-          command: deploy
-
-      - name: Push Worker secrets
+      - name: Deploy Worker and push secrets
+        id: run
+        continue-on-error: true
         run: |
-          npx wrangler secret put MCP_AUTH_TOKEN --name cf-control-mcp <<< "${MCP_AUTH_TOKEN}"
-          npx wrangler secret put CLOUDFLARE_API_TOKEN --name cf-control-mcp <<< "${CLOUDFLARE_API_TOKEN}"
-          npx wrangler secret put CLOUDFLARE_ACCOUNT_ID --name cf-control-mcp <<< "${ACCOUNT_ID}"
+          set +e
+          {
+            echo "=== wrangler deploy ==="
+            CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler deploy 2>&1
+            DEPLOY_EXIT=$?
+            echo "deploy exit code: $DEPLOY_EXIT"
+
+            if [ "$DEPLOY_EXIT" -eq 0 ]; then
+              echo "=== pushing secrets ==="
+              printf '%s' "$MCP_AUTH_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put MCP_AUTH_TOKEN 2>&1
+              printf '%s' "$CF_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put CLOUDFLARE_API_TOKEN 2>&1
+              printf '%s' "$ACCOUNT_ID" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put CLOUDFLARE_ACCOUNT_ID 2>&1
+            fi
+          } > deploy.log 2>&1
+          cat deploy.log
+          echo "final_exit=$DEPLOY_EXIT" >> "$GITHUB_OUTPUT"
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
           ACCOUNT_ID: ${{ steps.account.outputs.id }}
+
+      - name: Commit log
+        if: always()
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "deploy-bot"
+          git add -f deploy.log
+          git commit -m "chore: deploy log [skip ci]" || echo "nothing to commit"
+          git push || echo "push failed"
+
+      - name: Fail if deploy failed
+        if: steps.run.outputs.final_exit != '0'
+        run: exit 1
