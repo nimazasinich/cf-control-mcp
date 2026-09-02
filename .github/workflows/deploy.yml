@@ -4,6 +4,13 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'wrangler.jsonc'
+      - 'scripts/oauth_smoke.py'
+      - '.github/workflows/deploy.yml'
 
 permissions:
   contents: write
