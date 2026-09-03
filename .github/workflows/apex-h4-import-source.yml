@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - '.github/requests/apex-h4-import/**'
+      - '.github/workflows/apex-h4-import-source.yml'
 
 permissions:
   contents: write
