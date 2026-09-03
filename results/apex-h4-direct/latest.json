@@ -7,7 +7,7 @@
   "live_url": null,
   "live_http_status": null,
   "wrangler_exit": null,
-  "executed_at": "2026-09-03T04:13:33.988657+00:00",
+  "executed_at": "2026-09-03T04:14:33.537206+00:00",
   "token_source": "GitHub Actions secret CF_TOKEN5",
   "autonomous_live_execution": "not enabled by deployment workflow"
 }
