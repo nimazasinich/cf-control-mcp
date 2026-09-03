@@ -20,10 +20,13 @@ jobs:
     timeout-minutes: 60
     env:
       H4_DRIVE_FILE_ID: 1WcNuc-mPBsRK0JXx8ksXOjA9k2VED7Yw
+      H4_DRIVE_URL: "https://drive.google.com/file/d/1WcNuc-mPBsRK0JXx8ksXOjA9k2VED7Yw/view?usp=sharing"
       H4_SHA256: 0bdc42906804721f8b83439098516ffae80d13c0c1870a4f953f7a895fefa928
+      H4_SIZE: "133015090"
       H4_NAME: APEX-v2.0.1-CP28-H4-BINANCE-PROXY-RECOVERY-SOURCE-CANDIDATE.zip
       CLOUDFLARE_ACCOUNT_ID: d902b91f0f1076e0601ffd6e7b4382c0
       WORKER_NAME: apex-cp28-h4-staging
+      RESULT_DIR: results/apex-h4-direct
 
     steps:
       - uses: actions/checkout@v4
@@ -34,146 +37,337 @@ jobs:
         with:
           node-version: '22'
 
+      # ── Stage 1: Artifact download + verification ────────────────────────────
       - name: Download exact H4 ZIP from Google Drive and verify SHA-256
         id: artifact
         shell: bash
         run: |
-          set -euo pipefail
-          python3 -m pip install --disable-pip-version-check --quiet gdown
-          python3 -m gdown "$H4_DRIVE_FILE_ID" -O /tmp/apex-h4.zip
+          set +e
+          pip install --quiet --upgrade "gdown>=4.7.3"
+
+          echo "Attempting gdown --fuzzy (public share link)..."
+          python3 -m gdown --fuzzy "$H4_DRIVE_URL" -O /tmp/apex-h4.zip
+          rc=$?
+
+          if [ $rc -ne 0 ] || [ ! -s /tmp/apex-h4.zip ]; then
+            echo "gdown fuzzy failed (rc=$rc), trying direct file-id..."
+            rm -f /tmp/apex-h4.zip
+            python3 -m gdown "$H4_DRIVE_FILE_ID" -O /tmp/apex-h4.zip
+            rc=$?
+          fi
+
+          if [ $rc -ne 0 ] || [ ! -s /tmp/apex-h4.zip ]; then
+            echo "All gdown attempts failed."
+            echo "failure_stage=artifact_download" >> "$GITHUB_OUTPUT"
+            echo "exit_code=10" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
           actual_size=$(stat -c '%s' /tmp/apex-h4.zip)
           actual_sha=$(sha256sum /tmp/apex-h4.zip | awk '{print $1}')
-          echo "H4 artifact size: ${actual_size} bytes"
-          echo "H4 artifact SHA-256: ${actual_sha}"
-          test "$actual_size" = "133015090"
-          test "$actual_sha" = "$H4_SHA256"
-          echo "sha256=$actual_sha" >> "$GITHUB_OUTPUT"
+          echo "Downloaded size : ${actual_size} bytes  (expected ${H4_SIZE})"
+          echo "Downloaded SHA  : ${actual_sha}"
+          echo "Expected SHA    : ${H4_SHA256}"
 
+          if [ "$actual_size" != "$H4_SIZE" ]; then
+            echo "SIZE MISMATCH — expected ${H4_SIZE}, got ${actual_size}"
+            echo "failure_stage=artifact_size_mismatch" >> "$GITHUB_OUTPUT"
+            echo "exit_code=11" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          if [ "$actual_sha" != "$H4_SHA256" ]; then
+            echo "SHA-256 MISMATCH"
+            echo "failure_stage=artifact_sha_mismatch" >> "$GITHUB_OUTPUT"
+            echo "exit_code=12" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo "sha256=${actual_sha}" >> "$GITHUB_OUTPUT"
+          echo "failure_stage=none" >> "$GITHUB_OUTPUT"
+          echo "exit_code=0" >> "$GITHUB_OUTPUT"
+
+      # ── Stage 2: Extract ─────────────────────────────────────────────────────
       - name: Extract H4 source
         id: extract
+        if: steps.artifact.outputs.exit_code == '0'
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
           python3 scripts/apex_deploy_helper.py extract /tmp/apex-h4.zip /tmp/apex-h4-src >> "$GITHUB_OUTPUT"
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "failure_stage=extract" >> "$GITHUB_OUTPUT"
+            echo "exit_code=${rc}" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
           cd /tmp/apex-h4-src
-          echo "source_root=$PWD"
-          echo "git_head=$(git rev-parse HEAD 2>/dev/null || echo NO_GIT)"
-          echo "git_status_begin"
-          git status --short 2>/dev/null || true
-          echo "git_status_end"
-          test "$(tr -d '\r\n' < VERSION)" = "2.0.1"
+          ver=$(tr -d '
+' < VERSION 2>/dev/null || echo "MISSING")
+          echo "VERSION in zip: $ver"
+          if [ "$ver" != "2.0.1" ]; then
+            echo "VERSION mismatch: expected 2.0.1, got $ver"
+            echo "failure_stage=version_mismatch" >> "$GITHUB_OUTPUT"
+            echo "exit_code=20" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "failure_stage=none" >> "$GITHUB_OUTPUT"
+          echo "exit_code=0" >> "$GITHUB_OUTPUT"
 
+      # ── Stage 3: Build & verification gates ──────────────────────────────────
       - name: Install and run exact H4 verification gates
         id: build
+        if: steps.extract.outputs.exit_code == '0'
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
           cd /tmp/apex-h4-src
-          npm ci
-          npm run lint
-          npm run release:gate:source
-          npm run check:root-contract
-          npm run check:version-identity
-          npm run check:api-contract
-          npm run qa:app-index
-          npm run qa:smart-autopilot
-          npm run qa:unified-safety-runtime
-          npm run build
-          test -f dist/server.cjs
-          test -f dist/index.html
 
-      - name: Prepare full-project Cloudflare Container harness
+          run_gate() {
+            local label="$1"; shift
+            echo "::group::$label"
+            "$@"
+            local rc=$?
+            echo "::endgroup::"
+            if [ $rc -ne 0 ]; then
+              echo "GATE FAILED: $label (exit $rc)"
+              echo "failure_stage=build_gate_${label// /_}" >> "$GITHUB_OUTPUT"
+              echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+              exit $rc
+            fi
+          }
+
+          run_gate "npm_ci"                   npm ci
+          run_gate "lint"                     npm run lint
+          run_gate "release:gate:source"      npm run release:gate:source
+          run_gate "check:root-contract"      npm run check:root-contract
+          run_gate "check:version-identity"   npm run check:version-identity
+          run_gate "check:api-contract"       npm run check:api-contract
+          run_gate "qa:app-index"             npm run qa:app-index
+          run_gate "qa:smart-autopilot"       npm run qa:smart-autopilot
+          run_gate "qa:unified-safety-runtime" npm run qa:unified-safety-runtime
+          run_gate "build"                    npm run build
+
+          if [ ! -f dist/server.cjs ] || [ ! -f dist/index.html ]; then
+            echo "dist/ outputs missing after build"
+            echo "failure_stage=build_output_missing" >> "$GITHUB_OUTPUT"
+            echo "exit_code=63" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo "failure_stage=none" >> "$GITHUB_OUTPUT"
+          echo "exit_code=0" >> "$GITHUB_OUTPUT"
+
+      # ── Stage 4: Harness ─────────────────────────────────────────────────────
+      - name: Prepare Cloudflare Container harness
         id: harness
+        if: steps.build.outputs.exit_code == '0'
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
           python3 scripts/apex_deploy_helper.py prepare-harness /tmp/apex-h4-src "$WORKER_NAME"
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "failure_stage=harness_prepare" >> "$GITHUB_OUTPUT"
+            echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
           cd /tmp/apex-h4-src
           npm install --no-save --package-lock=false @cloudflare/containers wrangler@4.128.0
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "failure_stage=harness_npm_install" >> "$GITHUB_OUTPUT"
+            echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "failure_stage=none" >> "$GITHUB_OUTPUT"
+          echo "exit_code=0" >> "$GITHUB_OUTPUT"
 
+      # ── Stage 5: CF token verification ───────────────────────────────────────
       - name: Verify MASTER Cloudflare token against fixed account
         id: account
+        if: steps.harness.outputs.exit_code == '0'
         shell: bash
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_TOKEN5 }}
         run: |
-          set -euo pipefail
-          test -n "$CLOUDFLARE_API_TOKEN"
+          set +e
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "CF_TOKEN5 secret is empty"
+            echo "failure_stage=cf_token_missing" >> "$GITHUB_OUTPUT"
+            echo "exit_code=81" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
           response=$(curl -fsS \
             -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
             -H "Accept: application/json" \
-            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}")
-          printf '%s' "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('success') is True; r=d.get('result') or {}; assert r.get('id') == '${CLOUDFLARE_ACCOUNT_ID}'; print('MASTER token account verification: PASS')"
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}" 2>&1)
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "Cloudflare account probe failed (curl exit $rc)"
+            echo "Response: $response"
+            echo "failure_stage=cf_auth_failed" >> "$GITHUB_OUTPUT"
+            echo "exit_code=82" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "$response" | python3 -c "
+          import json,sys,os
+          d=json.load(sys.stdin)
+          expected=os.environ['CLOUDFLARE_ACCOUNT_ID']
+          if not d.get('success'):
+              print('CF API error:', d.get('errors'))
+              sys.exit(1)
+          got=d.get('result',{}).get('id','')
+          if got != expected:
+              print(f'Account ID mismatch: expected {expected}, got {got}')
+              sys.exit(1)
+          print('MASTER token account verification: PASS →', d['result']['name'])
+          "
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "failure_stage=cf_account_id_mismatch" >> "$GITHUB_OUTPUT"
+            echo "exit_code=83" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "failure_stage=none" >> "$GITHUB_OUTPUT"
+          echo "exit_code=0" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy complete H4 project to Cloudflare Containers
+      # ── Stage 6: Wrangler deploy ──────────────────────────────────────────────
+      - name: Deploy complete H4 project to Cloudflare Workers
         id: cloudflare
+        if: steps.account.outputs.exit_code == '0'
         shell: bash
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_TOKEN5 }}
         run: |
           set +e
           cd /tmp/apex-h4-src
-          npx wrangler deploy --config wrangler.apex.jsonc > /tmp/apex-h4-cloudflare-deploy.log 2>&1
-          code=$?
-          cat /tmp/apex-h4-cloudflare-deploy.log
+          npx wrangler deploy --config wrangler.apex.jsonc 2>&1 | tee /tmp/apex-h4-deploy.log
+          code=${PIPESTATUS[0]}
+          echo "Wrangler exit code: $code"
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-          if [ "$code" -ne 0 ]; then
-            exit "$code"
+
+          if [ $code -ne 0 ]; then
+            echo "failure_stage=wrangler_deploy" >> "$GITHUB_OUTPUT"
+            exit $code
           fi
-          url=$(grep -Eo 'https://[A-Za-z0-9._-]+\.workers\.dev' /tmp/apex-h4-cloudflare-deploy.log | tail -1 || true)
+
+          url=$(grep -Eo 'https://[A-Za-z0-9._-]+\.workers\.dev' /tmp/apex-h4-deploy.log | tail -1 || true)
           if [ -z "$url" ]; then
-            subdomain=$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            subdomain=$(curl -fsS \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
               "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/subdomain" | \
               python3 -c "import json,sys; d=json.load(sys.stdin); print((d.get('result') or {}).get('subdomain',''))" 2>/dev/null || true)
-            if [ -n "$subdomain" ]; then url="https://${WORKER_NAME}.${subdomain}.workers.dev"; fi
+            [ -n "$subdomain" ] && url="https://${WORKER_NAME}.${subdomain}.workers.dev"
           fi
-          test -n "$url"
-          echo "url=$url" >> "$GITHUB_OUTPUT"
 
+          echo "Deployed URL: $url"
+          echo "failure_stage=none" >> "$GITHUB_OUTPUT"
+          [ -n "$url" ] && echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      # ── Stage 7: Live verification ────────────────────────────────────────────
       - name: Verify live H4 staging URL
         id: live
+        if: steps.cloudflare.outputs.exit_code == '0'
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
           url='${{ steps.cloudflare.outputs.url }}'
-          test -n "$url"
+          if [ -z "$url" ]; then
+            echo "No deployment URL captured"
+            echo "failure_stage=live_no_url" >> "$GITHUB_OUTPUT"
+            echo "exit_code=91" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
           code=000
           for i in $(seq 1 36); do
-            code=$(curl -sS -o /tmp/apex-h4-live-body -w '%{http_code}' "$url/" || true)
+            code=$(curl -sSL -o /tmp/apex-h4-live-body -w '%{http_code}' "$url/" 2>/dev/null || echo "000")
+            echo "Attempt $i: HTTP $code"
             if [ "$code" -ge 200 ] 2>/dev/null && [ "$code" -lt 500 ] 2>/dev/null; then break; fi
             sleep 10
           done
-          echo "Live URL: $url"
-          echo "Live HTTP status: $code"
-          test "$code" -ge 200
-          test "$code" -lt 500
+
+          echo "Final live HTTP status: $code"
           echo "http_status=$code" >> "$GITHUB_OUTPUT"
 
+          if [ "$code" -ge 200 ] 2>/dev/null && [ "$code" -lt 500 ] 2>/dev/null; then
+            echo "failure_stage=none" >> "$GITHUB_OUTPUT"
+            echo "exit_code=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "failure_stage=live_timeout" >> "$GITHUB_OUTPUT"
+            echo "exit_code=92" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      # ── Result recording ──────────────────────────────────────────────────────
       - name: Record sanitized H4 deployment result
         if: always()
         shell: bash
         env:
-          LIVE_URL: ${{ steps.cloudflare.outputs.url }}
-          LIVE_HTTP: ${{ steps.live.outputs.http_status }}
-          CF_EXIT: ${{ steps.cloudflare.outputs.exit_code }}
+          ARTIFACT_STAGE:  ${{ steps.artifact.outputs.failure_stage  }}
+          ARTIFACT_EXIT:   ${{ steps.artifact.outputs.exit_code       }}
+          EXTRACT_STAGE:   ${{ steps.extract.outputs.failure_stage    }}
+          BUILD_STAGE:     ${{ steps.build.outputs.failure_stage      }}
+          BUILD_EXIT:      ${{ steps.build.outputs.exit_code          }}
+          HARNESS_STAGE:   ${{ steps.harness.outputs.failure_stage    }}
+          ACCOUNT_STAGE:   ${{ steps.account.outputs.failure_stage    }}
+          ACCOUNT_EXIT:    ${{ steps.account.outputs.exit_code        }}
+          CF_STAGE:        ${{ steps.cloudflare.outputs.failure_stage }}
+          CF_EXIT:         ${{ steps.cloudflare.outputs.exit_code     }}
+          LIVE_STAGE:      ${{ steps.live.outputs.failure_stage       }}
+          LIVE_URL:        ${{ steps.cloudflare.outputs.url           }}
+          LIVE_HTTP:       ${{ steps.live.outputs.http_status         }}
+          ARTIFACT_SHA:    ${{ steps.artifact.outputs.sha256          }}
         run: |
-          mkdir -p results/apex-h4-direct
+          mkdir -p "$RESULT_DIR"
           python3 - <<'PY'
           import datetime, json, os
+
+          def first_failure(*envs):
+              for e in envs:
+                  v = os.environ.get(e, '')
+                  if v and v != 'none':
+                      return v
+              return None
+
+          failure_stage = first_failure(
+              'ARTIFACT_STAGE','EXTRACT_STAGE','BUILD_STAGE',
+              'HARNESS_STAGE','ACCOUNT_STAGE','CF_STAGE','LIVE_STAGE'
+          )
+
+          def to_int(key):
+              v = os.environ.get(key, '')
+              return int(v) if v.lstrip('-').isdigit() else None
+
           payload = {
-            "project": "APEX",
-            "artifact": os.environ.get("H4_NAME"),
-            "artifact_sha256": os.environ.get("H4_SHA256"),
-            "cloudflare_account_id": os.environ.get("CLOUDFLARE_ACCOUNT_ID"),
-            "worker_name": os.environ.get("WORKER_NAME"),
-            "live_url": os.environ.get("LIVE_URL") or None,
-            "live_http_status": int(os.environ["LIVE_HTTP"]) if os.environ.get("LIVE_HTTP", "").isdigit() else None,
-            "wrangler_exit": int(os.environ["CF_EXIT"]) if os.environ.get("CF_EXIT", "").isdigit() else None,
-            "executed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "token_source": "GitHub Actions secret CF_TOKEN5",
-            "autonomous_live_execution": "not enabled by deployment workflow"
+              "project":               "APEX",
+              "artifact":              os.environ.get("H4_NAME"),
+              "artifact_sha256_expected": os.environ.get("H4_SHA256"),
+              "artifact_sha256_actual": os.environ.get("ARTIFACT_SHA") or None,
+              "cloudflare_account_id": os.environ.get("CLOUDFLARE_ACCOUNT_ID"),
+              "worker_name":           os.environ.get("WORKER_NAME"),
+              "failure_stage":         failure_stage,
+              "overall_success":       failure_stage is None and bool(os.environ.get("LIVE_URL")),
+              "live_url":              os.environ.get("LIVE_URL") or None,
+              "live_http_status":      to_int("LIVE_HTTP"),
+              "wrangler_exit":         to_int("CF_EXIT"),
+              "artifact_download_exit": to_int("ARTIFACT_EXIT"),
+              "build_exit":            to_int("BUILD_EXIT"),
+              "cf_auth_exit":          to_int("ACCOUNT_EXIT"),
+              "executed_at":           datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "token_source":          "GitHub Actions secret CF_TOKEN5",
+              "autonomous_live_execution": "not enabled by deployment workflow",
           }
-          open("results/apex-h4-direct/latest.json", "w", encoding="utf-8").write(json.dumps(payload, indent=2) + "\n")
+
+          result_path = os.path.join(os.environ['RESULT_DIR'], 'latest.json')
+          with open(result_path, 'w', encoding='utf-8') as f:
+              f.write(json.dumps(payload, indent=2) + '
+')
+
+          print('Result written to', result_path)
+          print('failure_stage:', failure_stage)
+          print('overall_success:', payload['overall_success'])
           PY
 
       - name: Commit sanitized deployment result
@@ -183,7 +377,7 @@ jobs:
           set -euo pipefail
           git config user.email "actions@github.com"
           git config user.name "apex-h4-cloudflare-deploy"
-          git add results/apex-h4-direct/latest.json || true
+          git add "$RESULT_DIR/latest.json" || true
           if git diff --cached --quiet; then exit 0; fi
           git commit -m "chore(apex-h4): record direct Cloudflare deployment result [skip ci]"
           git pull --rebase origin main
