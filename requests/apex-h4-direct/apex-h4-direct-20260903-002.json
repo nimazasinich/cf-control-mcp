@@ -1,0 +1,11 @@
+{
+  "project": "APEX",
+  "request_id": "apex-h4-direct-20260903-002",
+  "artifact": "APEX-v2.0.1-CP28-H4-BINANCE-PROXY-RECOVERY-SOURCE-CANDIDATE.zip",
+  "artifact_sha256": "0bdc42906804721f8b83439098516ffae80d13c0c1870a4f953f7a895fefa928",
+  "drive_file_id": "1WcNuc-mPBsRK0JXx8ksXOjA9k2VED7Yw",
+  "worker_name": "apex-cp28-h4-staging",
+  "confirm_deploy": true,
+  "transport": "gdown",
+  "reason": "Retry exact H4 deployment using gdown for Google Drive transport and GitHub Actions secret CF_TOKEN5 for Cloudflare MASTER authentication."
+}
