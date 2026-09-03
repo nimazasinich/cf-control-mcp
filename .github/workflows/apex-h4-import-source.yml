@@ -1,0 +1,168 @@
+name: APEX H4 Exact Source Import
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/requests/apex-h4-import/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apex-h4-source-import
+  cancel-in-progress: false
+
+env:
+  H4_FILE_ID: 1WcNuc-mPBsRK0JXx8ksXOjA9k2VED7Yw
+  H4_EXPECTED_SIZE: '133015090'
+  H4_EXPECTED_SHA256: 0bdc42906804721f8b83439098516ffae80d13c0c1870a4f953f7a895fefa928
+  TARGET_DIR: apex-h4
+  CHUNK_BYTES: '45000000'
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download exact H4 artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet gdown
+          python3 -m gdown "$H4_FILE_ID" -O /tmp/apex-h4.zip
+
+      - name: Verify exact artifact identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_size="$(stat -c%s /tmp/apex-h4.zip)"
+          actual_sha="$(sha256sum /tmp/apex-h4.zip | awk '{print $1}')"
+          echo "size=$actual_size"
+          echo "sha256=$actual_sha"
+          test "$actual_size" = "$H4_EXPECTED_SIZE"
+          test "$actual_sha" = "$H4_EXPECTED_SHA256"
+
+      - name: Extract exact project
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/apex-h4-extract "$TARGET_DIR"
+          mkdir -p /tmp/apex-h4-extract "$TARGET_DIR"
+          unzip -q /tmp/apex-h4.zip -d /tmp/apex-h4-extract
+          root="$(find /tmp/apex-h4-extract -mindepth 1 -maxdepth 1 -type d | head -n1)"
+          test -n "$root"
+          cp -a "$root"/. "$TARGET_DIR"/
+          rm -rf "$TARGET_DIR/.git"
+
+      - name: Refuse obvious secrets before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find "$TARGET_DIR" -type f \( -name '.env' -o -name '*.pem' -o -name '*.p12' -o -name '*.pfx' -o -name 'id_rsa' -o -name 'id_ed25519' \) | grep -q .; then
+            echo 'Sensitive file name detected; refusing public commit.' >&2
+            exit 1
+          fi
+          if grep -RIlE --exclude-dir=.git '(ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|cfut_[A-Za-z0-9_-]{20,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' "$TARGET_DIR" | grep -q .; then
+            echo 'Potential secret material detected; refusing public commit.' >&2
+            exit 1
+          fi
+
+      - name: Split files that exceed GitHub normal-file limit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, os
+
+          root = Path(os.environ['TARGET_DIR'])
+          chunk_size = int(os.environ['CHUNK_BYTES'])
+          manifest = {
+              'format': 1,
+              'artifact_sha256': os.environ['H4_EXPECTED_SHA256'],
+              'chunk_bytes': chunk_size,
+              'files': []
+          }
+
+          for path in sorted(p for p in root.rglob('*') if p.is_file()):
+              size = path.stat().st_size
+              if size <= chunk_size:
+                  continue
+              rel = path.relative_to(root).as_posix()
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              parts = []
+              with path.open('rb') as src:
+                  idx = 0
+                  while True:
+                      data = src.read(chunk_size)
+                      if not data:
+                          break
+                      part = path.with_name(path.name + f'.__apexpart_{idx:03d}')
+                      part.write_bytes(data)
+                      parts.append(part.relative_to(root).as_posix())
+                      idx += 1
+              manifest['files'].append({
+                  'path': rel,
+                  'size': size,
+                  'sha256': digest,
+                  'parts': parts,
+              })
+              path.unlink()
+
+          transport = root / '.apex-github-transport.json'
+          transport.write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
+          print(json.dumps(manifest, indent=2))
+          PY
+
+      - name: Write reconstruction helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$TARGET_DIR/scripts/reconstructGithubChunks.mjs" <<'EOF'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import crypto from 'node:crypto';
+
+          const root = process.argv[2] ? path.resolve(process.argv[2]) : process.cwd();
+          const manifestPath = path.join(root, '.apex-github-transport.json');
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+
+          for (const file of manifest.files || []) {
+            const out = path.join(root, file.path);
+            fs.mkdirSync(path.dirname(out), { recursive: true });
+            const fd = fs.openSync(out, 'w');
+            try {
+              for (const rel of file.parts) {
+                const buf = fs.readFileSync(path.join(root, rel));
+                fs.writeSync(fd, buf);
+              }
+            } finally {
+              fs.closeSync(fd);
+            }
+            const data = fs.readFileSync(out);
+            const sha = crypto.createHash('sha256').update(data).digest('hex');
+            if (data.length !== file.size || sha !== file.sha256) {
+              throw new Error(`Reconstruction verification failed for ${file.path}`);
+            }
+            console.log(`PASS ${file.path} ${data.length} ${sha}`);
+          }
+          EOF
+
+      - name: Commit exact H4 source into repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$TARGET_DIR"
+          if git diff --cached --quiet; then
+            echo 'No source changes to commit.'
+            exit 0
+          fi
+          git commit -m 'apex: import exact CP28 H4 source candidate'
+          git push origin HEAD:main
