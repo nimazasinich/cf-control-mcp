@@ -1,0 +1,19 @@
+name: CF TOKEN5 Probe
+on:
+  push:
+    branches: [main]
+    paths: ['requests/cf-token5-probe/**']
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify CF_TOKEN5 master token
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_TOKEN5 }}
+          CLOUDFLARE_ACCOUNT_ID: d902b91f0f1076e0601ffd6e7b4382c0
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H 'Accept: application/json' "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}" | python3 -c "import json,sys;d=json.load(sys.stdin);assert d.get('success') is True;assert (d.get('result') or {}).get('id')=='d902b91f0f1076e0601ffd6e7b4382c0';print('CF_TOKEN5 MASTER: PASS')"
