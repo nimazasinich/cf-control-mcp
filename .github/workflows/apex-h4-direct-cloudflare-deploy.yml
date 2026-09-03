@@ -37,7 +37,7 @@ jobs:
         with:
           node-version: '22'
 
-      # ── Stage 1: Artifact download + verification ────────────────────────────
+      # ── Stage 1: Artifact download + verification ──────────────────────────
       - name: Download exact H4 ZIP from Google Drive and verify SHA-256
         id: artifact
         shell: bash
@@ -45,32 +45,31 @@ jobs:
           set +e
           pip install --quiet --upgrade "gdown>=4.7.3"
 
-          echo "Attempting gdown --fuzzy (public share link)..."
+          echo "Attempting gdown --fuzzy with public share URL..."
           python3 -m gdown --fuzzy "$H4_DRIVE_URL" -O /tmp/apex-h4.zip
           rc=$?
 
           if [ $rc -ne 0 ] || [ ! -s /tmp/apex-h4.zip ]; then
-            echo "gdown fuzzy failed (rc=$rc), trying direct file-id..."
+            echo "gdown fuzzy failed (rc=$rc), retrying with file-id..."
             rm -f /tmp/apex-h4.zip
             python3 -m gdown "$H4_DRIVE_FILE_ID" -O /tmp/apex-h4.zip
             rc=$?
           fi
 
           if [ $rc -ne 0 ] || [ ! -s /tmp/apex-h4.zip ]; then
-            echo "All gdown attempts failed."
+            echo "All gdown attempts failed (last rc=$rc)."
             echo "failure_stage=artifact_download" >> "$GITHUB_OUTPUT"
-            echo "exit_code=10" >> "$GITHUB_OUTPUT"
+            echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
             exit 1
           fi
 
           actual_size=$(stat -c '%s' /tmp/apex-h4.zip)
           actual_sha=$(sha256sum /tmp/apex-h4.zip | awk '{print $1}')
-          echo "Downloaded size : ${actual_size} bytes  (expected ${H4_SIZE})"
+          echo "Downloaded size : ${actual_size} (expected ${H4_SIZE})"
           echo "Downloaded SHA  : ${actual_sha}"
-          echo "Expected SHA    : ${H4_SHA256}"
 
           if [ "$actual_size" != "$H4_SIZE" ]; then
-            echo "SIZE MISMATCH — expected ${H4_SIZE}, got ${actual_size}"
+            echo "SIZE MISMATCH"
             echo "failure_stage=artifact_size_mismatch" >> "$GITHUB_OUTPUT"
             echo "exit_code=11" >> "$GITHUB_OUTPUT"
             exit 1
@@ -87,7 +86,7 @@ jobs:
           echo "failure_stage=none" >> "$GITHUB_OUTPUT"
           echo "exit_code=0" >> "$GITHUB_OUTPUT"
 
-      # ── Stage 2: Extract ─────────────────────────────────────────────────────
+      # ── Stage 2: Extract ───────────────────────────────────────────────────
       - name: Extract H4 source
         id: extract
         if: steps.artifact.outputs.exit_code == '0'
@@ -101,9 +100,7 @@ jobs:
             echo "exit_code=${rc}" >> "$GITHUB_OUTPUT"
             exit 1
           fi
-          cd /tmp/apex-h4-src
-          ver=$(tr -d '
-' < VERSION 2>/dev/null || echo "MISSING")
+          ver=$(cat /tmp/apex-h4-src/VERSION | tr -d '\r\n' 2>/dev/null || echo "MISSING")
           echo "VERSION in zip: $ver"
           if [ "$ver" != "2.0.1" ]; then
             echo "VERSION mismatch: expected 2.0.1, got $ver"
@@ -114,7 +111,7 @@ jobs:
           echo "failure_stage=none" >> "$GITHUB_OUTPUT"
           echo "exit_code=0" >> "$GITHUB_OUTPUT"
 
-      # ── Stage 3: Build & verification gates ──────────────────────────────────
+      # ── Stage 3: Build & verification gates ───────────────────────────────
       - name: Install and run exact H4 verification gates
         id: build
         if: steps.extract.outputs.exit_code == '0'
@@ -125,31 +122,32 @@ jobs:
 
           run_gate() {
             local label="$1"; shift
-            echo "::group::$label"
+            echo "::group::Gate: $label"
             "$@"
             local rc=$?
             echo "::endgroup::"
             if [ $rc -ne 0 ]; then
               echo "GATE FAILED: $label (exit $rc)"
-              echo "failure_stage=build_gate_${label// /_}" >> "$GITHUB_OUTPUT"
+              echo "failure_stage=build_gate_${label}" >> "$GITHUB_OUTPUT"
               echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
               exit $rc
             fi
+            echo "Gate PASSED: $label"
           }
 
-          run_gate "npm_ci"                   npm ci
-          run_gate "lint"                     npm run lint
-          run_gate "release:gate:source"      npm run release:gate:source
-          run_gate "check:root-contract"      npm run check:root-contract
-          run_gate "check:version-identity"   npm run check:version-identity
-          run_gate "check:api-contract"       npm run check:api-contract
-          run_gate "qa:app-index"             npm run qa:app-index
-          run_gate "qa:smart-autopilot"       npm run qa:smart-autopilot
-          run_gate "qa:unified-safety-runtime" npm run qa:unified-safety-runtime
-          run_gate "build"                    npm run build
+          run_gate "npm_ci"                    npm ci
+          run_gate "lint"                      npm run lint
+          run_gate "release_gate_source"       npm run release:gate:source
+          run_gate "check_root_contract"       npm run check:root-contract
+          run_gate "check_version_identity"    npm run check:version-identity
+          run_gate "check_api_contract"        npm run check:api-contract
+          run_gate "qa_app_index"              npm run qa:app-index
+          run_gate "qa_smart_autopilot"        npm run qa:smart-autopilot
+          run_gate "qa_unified_safety_runtime" npm run qa:unified-safety-runtime
+          run_gate "build"                     npm run build
 
           if [ ! -f dist/server.cjs ] || [ ! -f dist/index.html ]; then
-            echo "dist/ outputs missing after build"
+            echo "dist/ outputs missing"
             echo "failure_stage=build_output_missing" >> "$GITHUB_OUTPUT"
             echo "exit_code=63" >> "$GITHUB_OUTPUT"
             exit 1
@@ -158,7 +156,7 @@ jobs:
           echo "failure_stage=none" >> "$GITHUB_OUTPUT"
           echo "exit_code=0" >> "$GITHUB_OUTPUT"
 
-      # ── Stage 4: Harness ─────────────────────────────────────────────────────
+      # ── Stage 4: Harness ──────────────────────────────────────────────────
       - name: Prepare Cloudflare Container harness
         id: harness
         if: steps.build.outputs.exit_code == '0'
@@ -169,7 +167,7 @@ jobs:
           rc=$?
           if [ $rc -ne 0 ]; then
             echo "failure_stage=harness_prepare" >> "$GITHUB_OUTPUT"
-            echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+            echo "exit_code=${rc}" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           cd /tmp/apex-h4-src
@@ -177,13 +175,13 @@ jobs:
           rc=$?
           if [ $rc -ne 0 ]; then
             echo "failure_stage=harness_npm_install" >> "$GITHUB_OUTPUT"
-            echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+            echo "exit_code=${rc}" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           echo "failure_stage=none" >> "$GITHUB_OUTPUT"
           echo "exit_code=0" >> "$GITHUB_OUTPUT"
 
-      # ── Stage 5: CF token verification ───────────────────────────────────────
+      # ── Stage 5: CF token verification ────────────────────────────────────
       - name: Verify MASTER Cloudflare token against fixed account
         id: account
         if: steps.harness.outputs.exit_code == '0'
@@ -211,17 +209,17 @@ jobs:
             exit 1
           fi
           echo "$response" | python3 -c "
-          import json,sys,os
-          d=json.load(sys.stdin)
-          expected=os.environ['CLOUDFLARE_ACCOUNT_ID']
+          import json, sys, os
+          d = json.load(sys.stdin)
+          expected = os.environ['CLOUDFLARE_ACCOUNT_ID']
           if not d.get('success'):
               print('CF API error:', d.get('errors'))
               sys.exit(1)
-          got=d.get('result',{}).get('id','')
+          got = (d.get('result') or {}).get('id', '')
           if got != expected:
               print(f'Account ID mismatch: expected {expected}, got {got}')
               sys.exit(1)
-          print('MASTER token account verification: PASS →', d['result']['name'])
+          print('CF token PASS:', d['result']['name'])
           "
           rc=$?
           if [ $rc -ne 0 ]; then
@@ -232,7 +230,7 @@ jobs:
           echo "failure_stage=none" >> "$GITHUB_OUTPUT"
           echo "exit_code=0" >> "$GITHUB_OUTPUT"
 
-      # ── Stage 6: Wrangler deploy ──────────────────────────────────────────────
+      # ── Stage 6: Wrangler deploy ───────────────────────────────────────────
       - name: Deploy complete H4 project to Cloudflare Workers
         id: cloudflare
         if: steps.account.outputs.exit_code == '0'
@@ -244,7 +242,7 @@ jobs:
           cd /tmp/apex-h4-src
           npx wrangler deploy --config wrangler.apex.jsonc 2>&1 | tee /tmp/apex-h4-deploy.log
           code=${PIPESTATUS[0]}
-          echo "Wrangler exit code: $code"
+          echo "Wrangler exit: $code"
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
 
           if [ $code -ne 0 ]; then
@@ -265,7 +263,7 @@ jobs:
           echo "failure_stage=none" >> "$GITHUB_OUTPUT"
           [ -n "$url" ] && echo "url=$url" >> "$GITHUB_OUTPUT"
 
-      # ── Stage 7: Live verification ────────────────────────────────────────────
+      # ── Stage 7: Live verification ─────────────────────────────────────────
       - name: Verify live H4 staging URL
         id: live
         if: steps.cloudflare.outputs.exit_code == '0'
@@ -274,23 +272,18 @@ jobs:
           set +e
           url='${{ steps.cloudflare.outputs.url }}'
           if [ -z "$url" ]; then
-            echo "No deployment URL captured"
             echo "failure_stage=live_no_url" >> "$GITHUB_OUTPUT"
             echo "exit_code=91" >> "$GITHUB_OUTPUT"
             exit 1
           fi
-
           code=000
           for i in $(seq 1 36); do
             code=$(curl -sSL -o /tmp/apex-h4-live-body -w '%{http_code}' "$url/" 2>/dev/null || echo "000")
             echo "Attempt $i: HTTP $code"
-            if [ "$code" -ge 200 ] 2>/dev/null && [ "$code" -lt 500 ] 2>/dev/null; then break; fi
+            [ "$code" -ge 200 ] 2>/dev/null && [ "$code" -lt 500 ] 2>/dev/null && break
             sleep 10
           done
-
-          echo "Final live HTTP status: $code"
           echo "http_status=$code" >> "$GITHUB_OUTPUT"
-
           if [ "$code" -ge 200 ] 2>/dev/null && [ "$code" -lt 500 ] 2>/dev/null; then
             echo "failure_stage=none" >> "$GITHUB_OUTPUT"
             echo "exit_code=0" >> "$GITHUB_OUTPUT"
@@ -300,75 +293,28 @@ jobs:
             exit 1
           fi
 
-      # ── Result recording ──────────────────────────────────────────────────────
+      # ── Result recording ───────────────────────────────────────────────────
       - name: Record sanitized H4 deployment result
         if: always()
         shell: bash
         env:
-          ARTIFACT_STAGE:  ${{ steps.artifact.outputs.failure_stage  }}
-          ARTIFACT_EXIT:   ${{ steps.artifact.outputs.exit_code       }}
-          EXTRACT_STAGE:   ${{ steps.extract.outputs.failure_stage    }}
-          BUILD_STAGE:     ${{ steps.build.outputs.failure_stage      }}
-          BUILD_EXIT:      ${{ steps.build.outputs.exit_code          }}
-          HARNESS_STAGE:   ${{ steps.harness.outputs.failure_stage    }}
-          ACCOUNT_STAGE:   ${{ steps.account.outputs.failure_stage    }}
-          ACCOUNT_EXIT:    ${{ steps.account.outputs.exit_code        }}
-          CF_STAGE:        ${{ steps.cloudflare.outputs.failure_stage }}
-          CF_EXIT:         ${{ steps.cloudflare.outputs.exit_code     }}
-          LIVE_STAGE:      ${{ steps.live.outputs.failure_stage       }}
-          LIVE_URL:        ${{ steps.cloudflare.outputs.url           }}
-          LIVE_HTTP:       ${{ steps.live.outputs.http_status         }}
-          ARTIFACT_SHA:    ${{ steps.artifact.outputs.sha256          }}
+          ARTIFACT_STAGE: ${{ steps.artifact.outputs.failure_stage  }}
+          ARTIFACT_EXIT:  ${{ steps.artifact.outputs.exit_code       }}
+          EXTRACT_STAGE:  ${{ steps.extract.outputs.failure_stage    }}
+          BUILD_STAGE:    ${{ steps.build.outputs.failure_stage      }}
+          BUILD_EXIT:     ${{ steps.build.outputs.exit_code          }}
+          HARNESS_STAGE:  ${{ steps.harness.outputs.failure_stage    }}
+          ACCOUNT_STAGE:  ${{ steps.account.outputs.failure_stage    }}
+          ACCOUNT_EXIT:   ${{ steps.account.outputs.exit_code        }}
+          CF_STAGE:       ${{ steps.cloudflare.outputs.failure_stage }}
+          CF_EXIT:        ${{ steps.cloudflare.outputs.exit_code     }}
+          LIVE_STAGE:     ${{ steps.live.outputs.failure_stage       }}
+          LIVE_URL:       ${{ steps.cloudflare.outputs.url           }}
+          LIVE_HTTP:      ${{ steps.live.outputs.http_status         }}
+          ARTIFACT_SHA:   ${{ steps.artifact.outputs.sha256          }}
         run: |
-          mkdir -p "$RESULT_DIR"
-          python3 - <<'PY'
-          import datetime, json, os
-
-          def first_failure(*envs):
-              for e in envs:
-                  v = os.environ.get(e, '')
-                  if v and v != 'none':
-                      return v
-              return None
-
-          failure_stage = first_failure(
-              'ARTIFACT_STAGE','EXTRACT_STAGE','BUILD_STAGE',
-              'HARNESS_STAGE','ACCOUNT_STAGE','CF_STAGE','LIVE_STAGE'
-          )
-
-          def to_int(key):
-              v = os.environ.get(key, '')
-              return int(v) if v.lstrip('-').isdigit() else None
-
-          payload = {
-              "project":               "APEX",
-              "artifact":              os.environ.get("H4_NAME"),
-              "artifact_sha256_expected": os.environ.get("H4_SHA256"),
-              "artifact_sha256_actual": os.environ.get("ARTIFACT_SHA") or None,
-              "cloudflare_account_id": os.environ.get("CLOUDFLARE_ACCOUNT_ID"),
-              "worker_name":           os.environ.get("WORKER_NAME"),
-              "failure_stage":         failure_stage,
-              "overall_success":       failure_stage is None and bool(os.environ.get("LIVE_URL")),
-              "live_url":              os.environ.get("LIVE_URL") or None,
-              "live_http_status":      to_int("LIVE_HTTP"),
-              "wrangler_exit":         to_int("CF_EXIT"),
-              "artifact_download_exit": to_int("ARTIFACT_EXIT"),
-              "build_exit":            to_int("BUILD_EXIT"),
-              "cf_auth_exit":          to_int("ACCOUNT_EXIT"),
-              "executed_at":           datetime.datetime.now(datetime.timezone.utc).isoformat(),
-              "token_source":          "GitHub Actions secret CF_TOKEN5",
-              "autonomous_live_execution": "not enabled by deployment workflow",
-          }
-
-          result_path = os.path.join(os.environ['RESULT_DIR'], 'latest.json')
-          with open(result_path, 'w', encoding='utf-8') as f:
-              f.write(json.dumps(payload, indent=2) + '
-')
-
-          print('Result written to', result_path)
-          print('failure_stage:', failure_stage)
-          print('overall_success:', payload['overall_success'])
-          PY
+          echo "aW1wb3J0IGRhdGV0aW1lLCBqc29uLCBvcwoKZGVmIGZpcnN0X2ZhaWx1cmUoKmVudnMpOgogICAgZm9yIGUgaW4gZW52czoKICAgICAgICB2ID0gb3MuZW52aXJvbi5nZXQoZSwgJycpCiAgICAgICAgaWYgdiBhbmQgdiAhPSAnbm9uZSc6CiAgICAgICAgICAgIHJldHVybiB2CiAgICByZXR1cm4gTm9uZQoKZmFpbHVyZV9zdGFnZSA9IGZpcnN0X2ZhaWx1cmUoCiAgICAnQVJUSUZBQ1RfU1RBR0UnLCdFWFRSQUNUX1NUQUdFJywnQlVJTERfU1RBR0UnLAogICAgJ0hBUk5FU1NfU1RBR0UnLCdBQ0NPVU5UX1NUQUdFJywnQ0ZfU1RBR0UnLCdMSVZFX1NUQUdFJwopCgpkZWYgdG9faW50KGtleSk6CiAgICB2ID0gb3MuZW52aXJvbi5nZXQoa2V5LCAnJykKICAgIHJldHVybiBpbnQodikgaWYgdi5sc3RyaXAoJy0nKS5pc2RpZ2l0KCkgZWxzZSBOb25lCgpwYXlsb2FkID0gewogICAgInByb2plY3QiOiAgICAgICAgICAgICAgICAgICAiQVBFWCIsCiAgICAiYXJ0aWZhY3QiOiAgICAgICAgICAgICAgICAgIG9zLmVudmlyb24uZ2V0KCJINF9OQU1FIiksCiAgICAiYXJ0aWZhY3Rfc2hhMjU2X2V4cGVjdGVkIjogIG9zLmVudmlyb24uZ2V0KCJINF9TSEEyNTYiKSwKICAgICJhcnRpZmFjdF9zaGEyNTZfYWN0dWFsIjogICAgb3MuZW52aXJvbi5nZXQoIkFSVElGQUNUX1NIQSIpIG9yIE5vbmUsCiAgICAiY2xvdWRmbGFyZV9hY2NvdW50X2lkIjogICAgIG9zLmVudmlyb24uZ2V0KCJDTE9VREZMQVJFX0FDQ09VTlRfSUQiKSwKICAgICJ3b3JrZXJfbmFtZSI6ICAgICAgICAgICAgICAgb3MuZW52aXJvbi5nZXQoIldPUktFUl9OQU1FIiksCiAgICAiZmFpbHVyZV9zdGFnZSI6ICAgICAgICAgICAgIGZhaWx1cmVfc3RhZ2UsCiAgICAib3ZlcmFsbF9zdWNjZXNzIjogICAgICAgICAgIGZhaWx1cmVfc3RhZ2UgaXMgTm9uZSBhbmQgYm9vbChvcy5lbnZpcm9uLmdldCgiTElWRV9VUkwiKSksCiAgICAibGl2ZV91cmwiOiAgICAgICAgICAgICAgICAgIG9zLmVudmlyb24uZ2V0KCJMSVZFX1VSTCIpIG9yIE5vbmUsCiAgICAibGl2ZV9odHRwX3N0YXR1cyI6ICAgICAgICAgIHRvX2ludCgiTElWRV9IVFRQIiksCiAgICAid3JhbmdsZXJfZXhpdCI6ICAgICAgICAgICAgIHRvX2ludCgiQ0ZfRVhJVCIpLAogICAgImFydGlmYWN0X2Rvd25sb2FkX2V4aXQiOiAgICB0b19pbnQoIkFSVElGQUNUX0VYSVQiKSwKICAgICJidWlsZF9leGl0IjogICAgICAgICAgICAgICAgdG9faW50KCJCVUlMRF9FWElUIiksCiAgICAiY2ZfYXV0aF9leGl0IjogICAgICAgICAgICAgIHRvX2ludCgiQUNDT1VOVF9FWElUIiksCiAgICAiZXhlY3V0ZWRfYXQiOiAgICAgICAgICAgICAgIGRhdGV0aW1lLmRhdGV0aW1lLm5vdyhkYXRldGltZS50aW1lem9uZS51dGMpLmlzb2Zvcm1hdCgpLAogICAgInRva2VuX3NvdXJjZSI6ICAgICAgICAgICAgICAiR2l0SHViIEFjdGlvbnMgc2VjcmV0IENGX1RPS0VONSIsCiAgICAiYXV0b25vbW91c19saXZlX2V4ZWN1dGlvbiI6ICJub3QgZW5hYmxlZCBieSBkZXBsb3ltZW50IHdvcmtmbG93IiwKfQoKcmVzdWx0X2RpciA9IG9zLmVudmlyb24uZ2V0KCdSRVNVTFRfRElSJywgJ3Jlc3VsdHMvYXBleC1oNC1kaXJlY3QnKQpvcy5tYWtlZGlycyhyZXN1bHRfZGlyLCBleGlzdF9vaz1UcnVlKQpyZXN1bHRfcGF0aCA9IG9zLnBhdGguam9pbihyZXN1bHRfZGlyLCAnbGF0ZXN0Lmpzb24nKQp3aXRoIG9wZW4ocmVzdWx0X3BhdGgsICd3JywgZW5jb2Rpbmc9J3V0Zi04JykgYXMgZjoKICAgIGYud3JpdGUoanNvbi5kdW1wcyhwYXlsb2FkLCBpbmRlbnQ9MikgKyAnXG4nKQpwcmludCgnUmVzdWx0IHdyaXR0ZW4gdG8nLCByZXN1bHRfcGF0aCkKcHJpbnQoJ2ZhaWx1cmVfc3RhZ2U6JywgZmFpbHVyZV9zdGFnZSkKcHJpbnQoJ292ZXJhbGxfc3VjY2VzczonLCBwYXlsb2FkWydvdmVyYWxsX3N1Y2Nlc3MnXSk=" | base64 -d > /tmp/apex_result.py
+          python3 /tmp/apex_result.py
 
       - name: Commit sanitized deployment result
         if: always()
