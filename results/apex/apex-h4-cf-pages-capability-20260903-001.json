@@ -1,0 +1,333 @@
+{
+  "request_id": "apex-h4-cf-pages-capability-20260903-001",
+  "project": "APEX",
+  "ok": true,
+  "executed_at": "2026-09-03T03:59:44.787597Z",
+  "http": {
+    "method": "GET",
+    "path": "/accounts/324f9984b34bf5d39a778c9753c49632/pages/projects",
+    "status": 200
+  },
+  "reason": "Verify that the existing GitHub-to-Cloudflare bridge token can access Cloudflare Pages before deploying the APEX CP28 H4 frontend for live UI verification.",
+  "response": {
+    "result": [
+      {
+        "id": "14735595-352f-4506-ac64-5443a737ffc3",
+        "name": "mcp-gateway-ui",
+        "subdomain": "mcp-gateway-ui.pages.dev",
+        "domains": [
+          "mcp-gateway-ui.pages.dev"
+        ],
+        "build_config": {
+          "web_analytics_tag": null,
+          "web_analytics_token": "[REDACTED]"
+        },
+        "deployment_configs": {
+          "preview": {
+            "env_vars": null,
+            "fail_open": true,
+            "always_use_latest_compatibility_date": false,
+            "compatibility_date": "2026-07-15",
+            "compatibility_flags": [],
+            "build_image_major_version": 3,
+            "usage_model": "standard"
+          },
+          "production": {
+            "env_vars": null,
+            "fail_open": true,
+            "always_use_latest_compatibility_date": false,
+            "compatibility_date": "2026-07-15",
+            "compatibility_flags": [],
+            "build_image_major_version": 3,
+            "usage_model": "standard"
+          }
+        },
+        "latest_deployment": {
+          "id": "2977ef52-476b-4cbf-8bba-fcb65313d8a5",
+          "short_id": "2977ef52",
+          "project_id": "14735595-352f-4506-ac64-5443a737ffc3",
+          "project_name": "mcp-gateway-ui",
+          "environment": "production",
+          "url": "https://2977ef52.mcp-gateway-ui.pages.dev",
+          "created_on": "2026-07-18T01:25:03.738201Z",
+          "modified_on": "2026-07-18T01:25:05.71671Z",
+          "latest_stage": {
+            "name": "deploy",
+            "started_on": null,
+            "ended_on": "2026-07-18T01:25:05.71671Z",
+            "status": "success"
+          },
+          "deployment_trigger": {
+            "type": "ad_hoc",
+            "metadata": {
+              "branch": "main",
+              "commit_hash": "",
+              "commit_message": "",
+              "commit_dirty": false
+            }
+          },
+          "stages": [
+            {
+              "name": "queued",
+              "started_on": "2026-07-18T01:25:03.738201Z",
+              "ended_on": null,
+              "status": "active"
+            },
+            {
+              "name": "initialize",
+              "started_on": null,
+              "ended_on": null,
+              "status": "idle"
+            },
+            {
+              "name": "clone_repo",
+              "started_on": null,
+              "ended_on": null,
+              "status": "idle"
+            },
+            {
+              "name": "build",
+              "started_on": null,
+              "ended_on": null,
+              "status": "idle"
+            },
+            {
+              "name": "deploy",
+              "started_on": null,
+              "ended_on": "2026-07-18T01:25:05.71671Z",
+              "status": "success"
+            }
+          ],
+          "build_config": {
+            "build_command": null,
+            "destination_dir": null,
+            "build_caching": null,
+            "root_dir": null,
+            "web_analytics_tag": null,
+            "web_analytics_token": "[REDACTED]"
+          },
+          "env_vars": {},
+          "compatibility_date": "2026-07-15",
+          "compatibility_flags": [],
+          "build_image_major_version": 3,
+          "usage_model": null,
+          "aliases": null,
+          "is_skipped": false,
+          "production_branch": "main",
+          "uses_functions": false
+        },
+        "canonical_deployment": {
+          "id": "2977ef52-476b-4cbf-8bba-fcb65313d8a5",
+          "short_id": "2977ef52",
+          "project_id": "14735595-352f-4506-ac64-5443a737ffc3",
+          "project_name": "mcp-gateway-ui",
+          "environment": "production",
+          "url": "https://2977ef52.mcp-gateway-ui.pages.dev",
+          "created_on": "2026-07-18T01:25:03.738201Z",
+          "modified_on": "2026-07-18T01:25:05.71671Z",
+          "latest_stage": {
+            "name": "deploy",
+            "started_on": null,
+            "ended_on": "2026-07-18T01:25:05.71671Z",
+            "status": "success"
+          },
+          "deployment_trigger": {
+            "type": "ad_hoc",
+            "metadata": {
+              "branch": "main",
+              "commit_hash": "",
+              "commit_message": "",
+              "commit_dirty": false
+            }
+          },
+          "stages": [
+            {
+              "name": "queued",
+              "started_on": "2026-07-18T01:25:03.738201Z",
+              "ended_on": null,
+              "status": "active"
+            },
+            {
+              "name": "initialize",
+              "started_on": null,
+              "ended_on": null,
+              "status": "idle"
+            },
+            {
+              "name": "clone_repo",
+              "started_on": null,
+              "ended_on": null,
+              "status": "idle"
+            },
+            {
+              "name": "build",
+              "started_on": null,
+              "ended_on": null,
+              "status": "idle"
+            },
+            {
+              "name": "deploy",
+              "started_on": null,
+              "ended_on": "2026-07-18T01:25:05.71671Z",
+              "status": "success"
+            }
+          ],
+          "build_config": {
+            "build_command": null,
+            "destination_dir": null,
+            "build_caching": null,
+            "root_dir": null,
+            "web_analytics_tag": null,
+            "web_analytics_token": "[REDACTED]"
+          },
+          "env_vars": {},
+          "compatibility_date": "2026-07-15",
+          "compatibility_flags": [],
+          "build_image_major_version": 3,
+          "usage_model": null,
+          "aliases": null,
+          "is_skipped": false,
+          "production_branch": "main",
+          "uses_functions": false
+        },
+        "created_on": "2026-07-15T03:58:20.633608Z",
+        "production_branch": "main",
+        "production_script_name": "pages-worker--16353153-production",
+        "preview_script_name": "pages-worker--16353153-preview",
+        "uses_functions": false,
+        "framework": "",
+        "framework_version": ""
+      },
+      {
+        "id": "41c94c27-c378-4010-a53d-09f6392a46de",
+        "name": "rental-management-system",
+        "subdomain": "rental-management-system.pages.dev",
+        "domains": [
+          "rental-management-system.pages.dev"
+        ],
+        "build_config": {
+          "web_analytics_tag": null,
+          "web_analytics_token": "[REDACTED]"
+        },
+        "deployment_configs": {
+          "preview": {
+            "env_vars": null,
+            "fail_open": true,
+            "always_use_latest_compatibility_date": false,
+            "compatibility_date": "2025-08-30",
+            "compatibility_flags": [],
+            "build_image_major_version": 3,
+            "usage_model": "standard"
+          },
+          "production": {
+            "env_vars": null,
+            "fail_open": true,
+            "always_use_latest_compatibility_date": false,
+            "compatibility_date": "2025-08-30",
+            "compatibility_flags": [],
+            "build_image_major_version": 3,
+            "usage_model": "standard"
+          }
+        },
+        "latest_deployment": {
+          "id": "a3abd01c-3ef0-4158-8700-67e21692a4fb",
+          "short_id": "a3abd01c",
+          "project_id": "41c94c27-c378-4010-a53d-09f6392a46de",
+          "project_name": "rental-management-system",
+          "environment": "preview",
+          "url": "https://a3abd01c.rental-management-system.pages.dev",
+          "created_on": "2025-08-30T21:20:26.670684Z",
+          "modified_on": "2025-08-30T21:20:29.50626Z",
+          "latest_stage": {
+            "name": "deploy",
+            "started_on": null,
+            "ended_on": "2025-08-30T21:20:29.50626Z",
+            "status": "success"
+          },
+          "deployment_trigger": {
+            "type": "ad_hoc",
+            "metadata": {
+              "branch": "cursor/implement-and-verify-rental-management-system-cce0",
+              "commit_hash": "9d7e2c3162c977f88aca108ea85df8b1ff154913",
+              "commit_message": "Checkpoint before follow-up message\r\n\r\nCo-authored-by: cursorpaymenter69 <cursorpaymenter69@gmail.com>",
+              "commit_dirty": true
+            }
+          },
+          "stages": [
+            {
+              "name": "queued",
+              "started_on": "2025-08-30T21:20:26.670684Z",
+              "ended_on": null,
+              "status": "active"
+            },
+            {
+              "name": "initialize",
+              "started_on": null,
+              "ended_on": null,
+              "status": "idle"
+            },
+            {
+              "name": "clone_repo",
+              "started_on": null,
+              "ended_on": null,
+              "status": "idle"
+            },
+            {
+              "name": "build",
+              "started_on": null,
+              "ended_on": null,
+              "status": "idle"
+            },
+            {
+              "name": "deploy",
+              "started_on": null,
+              "ended_on": "2025-08-30T21:20:29.50626Z",
+              "status": "success"
+            }
+          ],
+          "build_config": {
+            "build_command": null,
+            "destination_dir": null,
+            "build_caching": null,
+            "root_dir": null,
+            "web_analytics_tag": null,
+            "web_analytics_token": "[REDACTED]"
+          },
+          "env_vars": {},
+          "compatibility_date": "2025-08-30",
+          "compatibility_flags": [],
+          "build_image_major_version": 3,
+          "usage_model": null,
+          "aliases": [
+            "https://cursor-implement-and-verify.rental-management-system.pages.dev"
+          ],
+          "is_skipped": false,
+          "production_branch": "main",
+          "uses_functions": false
+        },
+        "canonical_deployment": null,
+        "created_on": "2025-08-30T21:20:13.880316Z",
+        "production_branch": "main",
+        "production_script_name": "pages-worker--7527834-production",
+        "preview_script_name": "pages-worker--7527834-preview",
+        "uses_functions": false,
+        "framework": "",
+        "framework_version": ""
+      }
+    ],
+    "success": true,
+    "errors": [],
+    "messages": [],
+    "result_info": {
+      "page": 1,
+      "per_page": 10,
+      "count": 2,
+      "total_count": 2,
+      "total_pages": 1
+    }
+  },
+  "response_meta": {
+    "content_type": "application/json; charset=UTF-8",
+    "cf_ray": "a351d7ef5e466abb-MSP"
+  }
+}
