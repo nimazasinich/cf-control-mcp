@@ -1,0 +1,10 @@
+{
+  "project": "APEX",
+  "request_id": "apex-h4-direct-20260903-001",
+  "artifact": "APEX-v2.0.1-CP28-H4-BINANCE-PROXY-RECOVERY-SOURCE-CANDIDATE.zip",
+  "artifact_sha256": "0bdc42906804721f8b83439098516ffae80d13c0c1870a4f953f7a895fefa928",
+  "drive_file_id": "1WcNuc-mPBsRK0JXx8ksXOjA9k2VED7Yw",
+  "worker_name": "apex-cp28-h4-staging",
+  "confirm_deploy": true,
+  "reason": "Deploy and live-verify the exact APEX CP28 H4 source candidate using the existing GitHub to Cloudflare pipeline and MASTER token secret CF_TOKEN5."
+}
