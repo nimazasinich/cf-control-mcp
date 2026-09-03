@@ -1,0 +1,9 @@
+{
+  "project": "APEX",
+  "artifact": "APEX-v2.0.1-CP28-H4-BINANCE-PROXY-RECOVERY-SOURCE-CANDIDATE.zip",
+  "frontend_payload_sha256": "80097c579985e2d57476bf8967195e0e7c485c5fb881149d4f6db5fc105d061a",
+  "live_url": null,
+  "live_http_status": null,
+  "executed_at": "2026-09-03T04:02:00.104671+00:00",
+  "scope": "compiled H4 frontend smoke-test deployment; backend-dependent actions remain unverified until full runtime is hosted"
+}
