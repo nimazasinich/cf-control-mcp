@@ -1,0 +1,112 @@
+name: APEX H4 Cloudflare Pages Preview
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/apex-h4/**'
+      - '.github/workflows/apex-h4-pages-preview.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apex-h4-pages-preview
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reassemble exact H4 compiled frontend
+        run: |
+          set -euo pipefail
+          mkdir -p deploy/apex-h4/site
+          cat deploy/apex-h4/chunks/*.part > deploy/apex-h4/site/index.html
+          echo '80097c579985e2d57476bf8967195e0e7c485c5fb881149d4f6db5fc105d061a  deploy/apex-h4/site/index.html' | sha256sum -c -
+          printf '%s\n' '/*' '  Cache-Control: no-store' > deploy/apex-h4/site/_headers
+
+      - name: Resolve Cloudflare account ID
+        id: account
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          response=$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Accept: application/json" "https://api.cloudflare.com/client/v4/accounts?per_page=1")
+          account_id=$(printf '%s' "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('success') is True and d.get('result'); print(d['result'][0]['id'])")
+          echo "id=$account_id" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure Pages project exists
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.account.outputs.id }}
+        run: |
+          set -euo pipefail
+          project='apex-h4-ui-check'
+          code=$(curl -sS -o /tmp/pages-project.json -w '%{http_code}' -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${project}")
+          if [ "$code" = "404" ]; then
+            curl -fsS -X POST -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H 'Content-Type: application/json' "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects" --data '{"name":"apex-h4-ui-check","production_branch":"main"}' > /tmp/pages-project-create.json
+          elif [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            cat /tmp/pages-project.json
+            exit 1
+          fi
+
+      - name: Deploy H4 frontend to Cloudflare Pages
+        id: pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.account.outputs.id }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.128.0 pages deploy deploy/apex-h4/site --project-name apex-h4-ui-check --branch main --commit-hash "$GITHUB_SHA" --commit-dirty=false 2>&1 | tee /tmp/pages-deploy.log
+          url=$(grep -Eo 'https://[A-Za-z0-9._-]+\.pages\.dev' /tmp/pages-deploy.log | tail -1)
+          test -n "$url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Verify live page
+        id: live
+        run: |
+          set -euo pipefail
+          url='${{ steps.pages.outputs.url }}'
+          code=$(curl -sS -o /tmp/apex-h4-live.html -w '%{http_code}' "$url/")
+          test "$code" -ge 200 -a "$code" -lt 400
+          grep -q 'APEX H4' /tmp/apex-h4-live.html
+          echo "http_status=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Write deployment result
+        if: always()
+        run: |
+          mkdir -p results/apex-h4-pages
+          python3 - <<'PY'
+          import json, os, datetime
+          result = {
+            'project':'APEX',
+            'artifact':'APEX-v2.0.1-CP28-H4-BINANCE-PROXY-RECOVERY-SOURCE-CANDIDATE.zip',
+            'frontend_payload_sha256':'80097c579985e2d57476bf8967195e0e7c485c5fb881149d4f6db5fc105d061a',
+            'live_url': os.environ.get('LIVE_URL') or None,
+            'live_http_status': int(os.environ['LIVE_HTTP']) if os.environ.get('LIVE_HTTP','').isdigit() else None,
+            'executed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'scope':'compiled H4 frontend smoke-test deployment; backend-dependent actions remain unverified until full runtime is hosted'
+          }
+          open('results/apex-h4-pages/latest.json','w').write(json.dumps(result,indent=2)+'\n')
+          PY
+        env:
+          LIVE_URL: ${{ steps.pages.outputs.url }}
+          LIVE_HTTP: ${{ steps.live.outputs.http_status }}
+
+      - name: Commit deployment result
+        if: always()
+        run: |
+          set -euo pipefail
+          git config user.email "actions@github.com"
+          git config user.name "apex-h4-pages-preview"
+          git add results/apex-h4-pages/latest.json || true
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "chore(apex-h4): record Pages preview result [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main
