@@ -1,0 +1,38 @@
+name: APEX CP28 Transport Probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apex-cp28-transport-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decrypt and verify CP28 transport
+        env:
+          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          req='requests/apex-deploy/apex-cp28-20260902-cloudflare-staging-001.json'
+          tmp_url=$(mktemp)
+          trap 'rm -f "$tmp_url" /tmp/apex-cp28.zip' EXIT
+          python3 scripts/apex_deploy_helper.py decrypt-url "$req" "$tmp_url"
+          artifact_url=$(cat "$tmp_url")
+          curl --fail --silent --show-error --location --output /tmp/apex-cp28.zip "$artifact_url"
+          unset artifact_url
+          size=$(stat -c%s /tmp/apex-cp28.zip)
+          sha=$(sha256sum /tmp/apex-cp28.zip | awk '{print $1}')
+          echo "size=$size"
+          echo "sha256=$sha"
+          test "$size" = '82304931'
+          test "$sha" = '43c7e7212c845a4099861140415733debee38ebffc2d41ac26d7e2d7e5a2e10d'
+          echo 'CP28_TRANSPORT_PASS'
