@@ -1,0 +1,7 @@
+{
+  "project": "APEX",
+  "request_id": "apex-h4-cf-pages-capability-20260903-001",
+  "method": "GET",
+  "path": "/accounts/{account_id}/pages/projects",
+  "reason": "Verify that the existing GitHub-to-Cloudflare bridge token can access Cloudflare Pages before deploying the APEX CP28 H4 frontend for live UI verification."
+}
