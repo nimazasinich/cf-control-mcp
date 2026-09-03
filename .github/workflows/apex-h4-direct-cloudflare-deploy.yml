@@ -39,9 +39,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          url="https://drive.usercontent.google.com/download?id=${H4_DRIVE_FILE_ID}&export=download&confirm=t"
-          curl --fail --show-error --silent --location --retry 3 --retry-all-errors \
-            --output /tmp/apex-h4.zip "$url"
+          python3 -m pip install --disable-pip-version-check --quiet gdown
+          python3 -m gdown --id "$H4_DRIVE_FILE_ID" --output /tmp/apex-h4.zip
           actual_size=$(stat -c '%s' /tmp/apex-h4.zip)
           actual_sha=$(sha256sum /tmp/apex-h4.zip | awk '{print $1}')
           echo "H4 artifact size: ${actual_size} bytes"
