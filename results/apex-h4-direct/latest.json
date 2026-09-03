@@ -1,0 +1,13 @@
+{
+  "project": "APEX",
+  "artifact": "APEX-v2.0.1-CP28-H4-BINANCE-PROXY-RECOVERY-SOURCE-CANDIDATE.zip",
+  "artifact_sha256": "0bdc42906804721f8b83439098516ffae80d13c0c1870a4f953f7a895fefa928",
+  "cloudflare_account_id": "d902b91f0f1076e0601ffd6e7b4382c0",
+  "worker_name": "apex-cp28-h4-staging",
+  "live_url": null,
+  "live_http_status": null,
+  "wrangler_exit": null,
+  "executed_at": "2026-09-03T04:12:29.627695+00:00",
+  "token_source": "GitHub Actions secret CF_TOKEN5",
+  "autonomous_live_execution": "not enabled by deployment workflow"
+}
