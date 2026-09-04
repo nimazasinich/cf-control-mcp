@@ -1,0 +1,10 @@
+{
+  "project": "ProxyHarvest",
+  "request_id": "deploy-proxyharvest-gateway-v1",
+  "operation": "deploy_worker",
+  "script_name": "proxyharvest-gateway",
+  "source_path": "deploy/proxyharvest/worker.mjs",
+  "compatibility_date": "2026-09-04",
+  "confirm_destructive": true,
+  "reason": "Deploy the Cloudflare fetch/probe gateway required by the current ProxyHarvest app-merged.js contract."
+}
