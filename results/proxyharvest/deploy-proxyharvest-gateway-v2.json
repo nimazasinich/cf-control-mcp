@@ -1,0 +1,62 @@
+{
+  "request_id": "deploy-proxyharvest-gateway-v2",
+  "project": "ProxyHarvest",
+  "operation": "deploy_worker",
+  "ok": true,
+  "executed_at": "2026-09-04T06:04:12.024475Z",
+  "script_name": "proxyharvest-gateway",
+  "source_path": "deploy/proxyharvest/worker.mjs",
+  "compatibility_date": "2026-09-04",
+  "cloudflare": {
+    "http_status": 200,
+    "api_path": "/accounts/324f9984b34bf5d39a778c9753c49632/workers/scripts/proxyharvest-gateway",
+    "response": {
+      "result": {
+        "created_on": "2026-09-04T06:02:31.202401Z",
+        "modified_on": "2026-09-04T06:04:11.484603Z",
+        "id": "proxyharvest-gateway",
+        "tag": "d0f42853f1d442699d894e2d911a142a",
+        "entry_point": "worker.mjs",
+        "tags": null,
+        "deployment_id": "3c5dc7c1b3c349f8b2e5bd05db34582c",
+        "tail_consumers": null,
+        "logpush": false,
+        "has_assets": false,
+        "has_modules": true,
+        "etag": "92270a08275babb9329b67ca8029e1d79de1a7ad3c5146b974eb88b183d7d1e2",
+        "handlers": [
+          "fetch"
+        ],
+        "last_deployed_from": "api",
+        "compatibility_date": "2026-09-04",
+        "usage_model": "standard",
+        "startup_time_ms": 5
+      },
+      "success": true,
+      "errors": [],
+      "messages": []
+    },
+    "cf_ray": "a35acb99d8314c7c-SJC"
+  },
+  "health": {
+    "url": "https://proxyharvest-gateway.amin-chinisaz-edu.workers.dev/health",
+    "ok": true,
+    "status": 200,
+    "body": {
+      "ok": true,
+      "service": "ProxyHarvest Fetch Gateway",
+      "version": "3.0.0",
+      "timestamp": "2026-09-04T06:04:12.019Z",
+      "endpoints": [
+        "/health",
+        "/fetch-sub",
+        "/probe",
+        "/__admin"
+      ],
+      "sourceHostAllowlistSize": 8,
+      "maxBodyBytes": 2000000,
+      "cacheTtlSeconds": 300
+    }
+  },
+  "reason": "Redeploy ProxyHarvest gateway after enabling its workers.dev route and verify the public /health endpoint."
+}
