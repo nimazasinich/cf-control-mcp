@@ -1,0 +1,10 @@
+{
+  "project": "ProxyHarvest",
+  "request_id": "deploy-proxyharvest-gateway-v2",
+  "operation": "deploy_worker",
+  "script_name": "proxyharvest-gateway",
+  "source_path": "deploy/proxyharvest/worker.mjs",
+  "compatibility_date": "2026-09-04",
+  "confirm_destructive": true,
+  "reason": "Redeploy ProxyHarvest gateway after enabling its workers.dev route and verify the public /health endpoint."
+}
