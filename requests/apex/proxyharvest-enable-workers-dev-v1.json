@@ -1,0 +1,12 @@
+{
+  "project": "APEX",
+  "request_id": "proxyharvest-enable-workers-dev-v1",
+  "method": "POST",
+  "path": "/accounts/{account_id}/workers/scripts/proxyharvest-gateway/subdomain",
+  "body": {
+    "enabled": true,
+    "previews_enabled": false
+  },
+  "confirm_destructive": true,
+  "reason": "Enable the deployed ProxyHarvest gateway on the account workers.dev subdomain so the application can reach its health, fetch-sub, and probe endpoints."
+}
