@@ -1,0 +1,79 @@
+name: mcp-exec
+run-name: "mcp-exec ${{ inputs.run_key }}"
+
+# Manually-dispatched sandbox job used by the cf-control-mcp `gh_run_code` /
+# `gh_get_run_result` tools. Each dispatch gets a real, ephemeral Ubuntu VM
+# with full internet access and is torn down afterwards. `run_key` is an
+# opaque nonce the Worker generates so it can find this exact run afterwards
+# (the run-name above embeds it, and the dispatch response has no run id).
+#
+# This intentionally lets the caller run arbitrary code and shell commands —
+# that is the feature. Anyone who can call the MCP server's gh_run_code tool
+# gets full-VM code execution billed to this repo's Actions minutes; treat
+# MCP_AUTH_TOKEN / the OAuth owner-approval step as the actual access control.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_key:
+        description: "Opaque nonce identifying this run"
+        required: true
+      language:
+        description: "python | node | bash | go | ruby | php"
+        required: true
+        default: "python"
+      code_b64:
+        description: "Base64-encoded source code to run"
+        required: true
+      setup:
+        description: "Optional shell command to run before the code (e.g. pip install requests)"
+        required: false
+        default: ""
+      args:
+        description: "Optional space-separated CLI args passed to the program"
+        required: false
+        default: ""
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Decode payload
+        env:
+          CODE_B64: ${{ inputs.code_b64 }}
+          LANGUAGE: ${{ inputs.language }}
+        run: |
+          set -e
+          echo "$CODE_B64" | base64 -d > "$RUNNER_TEMP/payload.src"
+          case "$LANGUAGE" in
+            python) cp "$RUNNER_TEMP/payload.src" "$RUNNER_TEMP/payload.py" ;;
+            node)   cp "$RUNNER_TEMP/payload.src" "$RUNNER_TEMP/payload.js" ;;
+            bash)   cp "$RUNNER_TEMP/payload.src" "$RUNNER_TEMP/payload.sh" ;;
+            go)     cp "$RUNNER_TEMP/payload.src" "$RUNNER_TEMP/payload.go" ;;
+            ruby)   cp "$RUNNER_TEMP/payload.src" "$RUNNER_TEMP/payload.rb" ;;
+            php)    cp "$RUNNER_TEMP/payload.src" "$RUNNER_TEMP/payload.php" ;;
+            *) echo "Unsupported language: $LANGUAGE" >&2; exit 1 ;;
+          esac
+
+      - name: Setup step (optional)
+        if: ${{ inputs.setup != '' }}
+        env:
+          SETUP_CMD: ${{ inputs.setup }}
+        run: eval "$SETUP_CMD"
+
+      - name: Run payload
+        env:
+          LANGUAGE: ${{ inputs.language }}
+          PROG_ARGS: ${{ inputs.args }}
+        run: |
+          set -e
+          cd "$RUNNER_TEMP"
+          case "$LANGUAGE" in
+            python) python3 payload.py $PROG_ARGS ;;
+            node)   node payload.js $PROG_ARGS ;;
+            bash)   bash payload.sh $PROG_ARGS ;;
+            go)     go run payload.go $PROG_ARGS ;;
+            ruby)   ruby payload.rb $PROG_ARGS ;;
+            php)    php payload.php $PROG_ARGS ;;
+          esac
