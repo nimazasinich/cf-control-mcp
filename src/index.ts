@@ -37,6 +37,31 @@ export interface Env {
 	TAVILY_API_KEY?: string;
 	/** Optional. Exa API key — enables the `exa` search provider. Set via `wrangler secret put EXA_API_KEY`. */
 	EXA_API_KEY?: string;
+
+	// -------------------------------------------------------------------------
+	// Provider Gateway (v1.7) — OpenAI-compatible /v1/* endpoints for Gemini
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Bearer token that clients must supply to access /v1/*.
+	 * Completely separate from MCP_AUTH_TOKEN — never forwarded to Google.
+	 * Set via: wrangler secret put GATEWAY_AUTH_TOKEN
+	 */
+	GATEWAY_AUTH_TOKEN?: string;
+	/**
+	 * Google AI Studio API key.
+	 * Stored as a Worker secret, NEVER returned to clients.
+	 * Set via: wrangler secret put GOOGLE_AI_STUDIO_KEY
+	 */
+	GOOGLE_AI_STUDIO_KEY?: string;
+	/**
+	 * Cloudflare AI Gateway gateway slug.
+	 * When set, /v1/chat/completions is routed via the AI Gateway compat
+	 * endpoint for observability, caching, and rate-limiting.
+	 * When absent, requests go directly to Google AI Studio.
+	 * Set as a plain var (not a secret) in wrangler.jsonc.
+	 */
+	CF_AIG_GATEWAY_SLUG?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -1068,7 +1093,7 @@ const toolsByName = new Map(tools.map((t) => [t.name, t]));
 // MCP method handlers
 // ---------------------------------------------------------------------------
 
-const SERVER_INFO = { name: "cf-control-mcp", version: "1.6.0" };
+const SERVER_INFO = { name: "cf-control-mcp", version: "1.7.0" };
 const PROTOCOL_VERSION = "2025-06-18";
 
 async function handleRpc(req: JsonRpcRequest, env: Env): Promise<JsonRpcSuccess | JsonRpcError> {

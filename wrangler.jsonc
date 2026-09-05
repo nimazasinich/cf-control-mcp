@@ -6,5 +6,13 @@
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
+  },
+  "vars": {
+    // Cloudflare AI Gateway slug for the provider gateway (not a secret).
+    // When set, POST /v1/chat/completions routes via:
+    //   https://gateway.ai.cloudflare.com/v1/{account_id}/cf-control-mcp/compat/chat/completions
+    // Leave empty to fall back to direct Google AI Studio calls.
+    // Create the gateway in: Cloudflare Dashboard → AI → AI Gateway → New Gateway
+    "CF_AIG_GATEWAY_SLUG": "cf-control-mcp"
   }
 }

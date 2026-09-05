@@ -1,4 +1,5 @@
 import legacyWorker, { type Env } from "./index";
+import { handleProviderGateway } from "./provider-gateway/router";
 
 /**
  * OAuth 2.1 / MCP authorization wrapper around the existing stateless MCP server.
@@ -615,11 +616,22 @@ export default {
     if (url.pathname === "/token") return tokenEndpoint(request, env, origin);
     if (url.pathname === "/mcp") return proxyMcp(request, env, origin);
 
+    // Provider Gateway — OpenAI-compatible /v1/* endpoints for Google Gemini.
+    // Uses a separate GATEWAY_AUTH_TOKEN; MCP_AUTH_TOKEN is never involved.
+    if (url.pathname.startsWith("/v1/")) return handleProviderGateway(request, env);
+
     if (url.pathname === "/" && request.method === "GET") {
       return json({
         name: "cf-control-mcp",
-        description: "OAuth-enabled remote MCP server for read-only ChatGPT Web access, with legacy owner-token access retained.",
+        version: "1.7.0",
+        description: "OAuth-enabled remote MCP server for Cloudflare account control, plus OpenAI-compatible provider gateway for Google Gemini.",
         mcp_endpoint: `${origin}/mcp`,
+        provider_gateway: {
+          models_endpoint: `${origin}/v1/models`,
+          chat_completions_endpoint: `${origin}/v1/chat/completions`,
+          auth: "Bearer GATEWAY_AUTH_TOKEN (separate from MCP auth)",
+          providers: ["google-gemini"],
+        },
         oauth: {
           protected_resource_metadata: `${origin}/.well-known/oauth-protected-resource`,
           authorization_server_metadata: `${origin}/.well-known/oauth-authorization-server`,
