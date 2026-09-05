@@ -5,3 +5,5 @@ node_modules/
 .env.*
 !.env.example
 build-test/
+state/*.local.txt
+scripts/_gw_secret_setup.py
