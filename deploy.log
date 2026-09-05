@@ -10,13 +10,13 @@
   After installation, run Wrangler with `npx wrangler`.
 
 
-Total Upload: 95.72 KiB / gzip: 22.34 KiB
+Total Upload: 169.18 KiB / gzip: 38.71 KiB
 Worker Startup Time: 13 ms
 No bindings found.
-Uploaded cf-control-mcp (1.45 sec)
-Deployed cf-control-mcp triggers (0.18 sec)
+Uploaded cf-control-mcp (1.50 sec)
+Deployed cf-control-mcp triggers (0.17 sec)
   https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-Current Version ID: a70254ce-8d68-4881-a528-24a9fa1c847c
+Current Version ID: 627df942-2ad4-4785-9758-c1cc727e4c67
 
 Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
 deploy exit code: 0
@@ -74,5 +74,33 @@ deploy exit code: 0
 
 🌀 Creating the secret for the Worker "cf-control-mcp" 
 ✨ Success! Uploaded secret HUGGINGFACE_TOKEN
+=== pushing GITHUB_PAT secret ===
+
+ ⛅️ wrangler 3.114.17 (update available 4.129.0)
+------------------------------------------------
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe version of Wrangler you are using is now out-of-date.[0m
+
+  Please update to the latest version to prevent critical errors.
+  Run `npm install --save-dev wrangler@4` to update to the latest version.
+  After installation, run Wrangler with `npx wrangler`.
+
+
+🌀 Creating the secret for the Worker "cf-control-mcp" 
+✨ Success! Uploaded secret GITHUB_PAT
+=== pushing GITHUB_REPO secret ===
+
+ ⛅️ wrangler 3.114.17 (update available 4.129.0)
+------------------------------------------------
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe version of Wrangler you are using is now out-of-date.[0m
+
+  Please update to the latest version to prevent critical errors.
+  Run `npm install --save-dev wrangler@4` to update to the latest version.
+  After installation, run Wrangler with `npx wrangler`.
+
+
+🌀 Creating the secret for the Worker "cf-control-mcp" 
+✨ Success! Uploaded secret GITHUB_REPO
 === live OAuth/MCP verification ===
 PASS: OAuth discovery, DCR, consent, PKCE, token exchange, refresh, upgraded MCP tools, legacy path, and 401 challenge
