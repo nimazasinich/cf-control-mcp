@@ -628,7 +628,7 @@ export default {
     if (url.pathname === "/" && request.method === "GET") {
       return json({
         name: "cf-control-mcp",
-        version: "1.7.0",
+        version: "1.8.0",
         description: "OAuth-enabled remote MCP server for Cloudflare account control, plus OpenAI-compatible provider gateway for Google Gemini.",
         mcp_endpoint: `${origin}/mcp`,
         provider_gateway: {

@@ -33,8 +33,35 @@ const GOOGLE_AI_STUDIO_BASE = "https://generativelanguage.googleapis.com/v1beta/
 const GOOGLE_AI_STUDIO_PREFIX = "google-ai-studio";
 
 // ---------------------------------------------------------------------------
-// Model name normalisation
+// Model name normalisation & alias resolution
 // ---------------------------------------------------------------------------
+
+const DEFAULT_ALIASES: Record<string, string> = {
+	fast: "gemini-2.5-flash",
+	coding: "gemini-2.0-flash",
+	research: "gemini-2.5-pro",
+};
+
+/**
+ * Resolve client model name against dynamic routing rules in D1 (if available),
+ * falling back to default aliases (fast, coding, research).
+ */
+export async function resolveModel(model: string, env: GatewayEnv): Promise<string> {
+	const db = env.DM_DB || env.DB;
+	if (db) {
+		try {
+			const rule = await db.prepare(
+				"SELECT model_id FROM routing_rules WHERE public_alias = ?"
+			).bind(model).first<{ model_id: string }>();
+			if (rule?.model_id) {
+				return rule.model_id;
+			}
+		} catch {
+			// fallback to default aliases if D1 query fails
+		}
+	}
+	return DEFAULT_ALIASES[model] || model;
+}
 
 /**
  * Normalise a client-supplied model name for the Cloudflare AI Gateway
@@ -111,7 +138,7 @@ async function forwardViaGateway(
 	// on the request always wins over a stored BYOK key — omitting it is
 	// what allows the gateway's own stored Google AI Studio credential
 	// (Secrets Store, `default` alias) to be used server-side.
-	const aigToken = env.CF_AIG_TOKEN?.trim();
+	const aigToken = env.CF_AIG_TOKEN?.trim() || env.CLOUDFLARE_API_TOKEN?.trim();
 	if (aigToken) {
 		// Only needed if this gateway is configured as an "authenticated
 		// gateway" in Cloudflare. This authenticates Worker → AI Gateway; it
@@ -119,10 +146,12 @@ async function forwardViaGateway(
 		headers["cf-aig-authorization"] = `Bearer ${aigToken}`;
 	}
 
+	const resolvedModel = await resolveModel(body.model, env);
+
 	const upstream = await fetch(url, {
 		method: "POST",
 		headers,
-		body: JSON.stringify({ ...body, model: normalizeModelForGateway(body.model) }),
+		body: JSON.stringify({ ...body, model: normalizeModelForGateway(resolvedModel) }),
 	});
 
 	return withCors(upstream);
@@ -143,13 +172,15 @@ async function forwardDirect(
 	const apiKey = env.GOOGLE_AI_STUDIO_KEY!;
 	const url = `${GOOGLE_AI_STUDIO_BASE}/chat/completions`;
 
+	const resolvedModel = await resolveModel(body.model, env);
+
 	const upstream = await fetch(url, {
 		method: "POST",
 		headers: {
 			"Authorization": `Bearer ${apiKey}`,
 			"Content-Type": "application/json",
 		},
-		body: JSON.stringify({ ...body, model: normalizeModelForDirect(body.model) }),
+		body: JSON.stringify({ ...body, model: normalizeModelForDirect(resolvedModel) }),
 	});
 
 	return withCors(upstream);

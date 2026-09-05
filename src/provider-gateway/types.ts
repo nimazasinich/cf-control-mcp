@@ -34,6 +34,10 @@ export interface GatewayEnv {
 	 */
 	CF_AIG_TOKEN?: string;
 	/**
+	 * Optional Cloudflare account API token fallback for cf-aig-authorization.
+	 */
+	CLOUDFLARE_API_TOKEN?: string;
+	/**
 	 * Legacy escape hatch only: explicitly opt in ("true") to let the Worker
 	 * call Google AI Studio directly with a locally-held key, bypassing AI
 	 * Gateway BYOK entirely. Disabled by default because it contradicts the
@@ -47,6 +51,11 @@ export interface GatewayEnv {
 	 * Under the standard BYOK architecture this should not be set at all.
 	 */
 	GOOGLE_AI_STUDIO_KEY?: string;
+	/**
+	 * Optional D1 database binding for dynamic routing rules.
+	 */
+	DM_DB?: D1Database;
+	DB?: D1Database;
 }
 
 // ---------------------------------------------------------------------------

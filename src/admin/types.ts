@@ -37,3 +37,27 @@ export interface ProviderRow {
 	created_at: string;
 	updated_at: string;
 }
+
+export interface ModelRow {
+	id: string;
+	provider_id: string;
+	public_alias: string | null;
+	enabled: number;
+	created_at: string;
+}
+
+export interface RoutingRuleRow {
+	public_alias: string;
+	model_id: string;
+	updated_at: string;
+}
+
+export interface HealthCheckRow {
+	id: number;
+	provider_id: string;
+	checked_at: string;
+	state: HealthState;
+	latency_ms: number | null;
+	error_message: string | null;
+}
+

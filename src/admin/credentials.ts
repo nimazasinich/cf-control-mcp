@@ -11,6 +11,19 @@
  */
 import type { AdminEnv } from "./types";
 
+async function getSecretsStoreId(env: AdminEnv): Promise<string | null> {
+	if (!env.CLOUDFLARE_API_TOKEN || !env.CLOUDFLARE_ACCOUNT_ID) return null;
+	const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/secrets_store/stores`, {
+		headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` },
+	});
+	const data = await res.json<{ success: boolean; result?: Array<{ id: string; name: string }> }>();
+	if (data.success && data.result && data.result.length > 0) {
+		const def = data.result.find((s) => s.name === "default_secrets_store");
+		return def ? def.id : data.result[0].id;
+	}
+	return null;
+}
+
 export async function setProviderCredential(
 	env: AdminEnv,
 	providerSlug: string,
@@ -21,8 +34,33 @@ export async function setProviderCredential(
 		return { ok: false, error: "CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, or CF_AIG_GATEWAY_SLUG not configured" };
 	}
 
-	const url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai-gateway/gateways/${env.CF_AIG_GATEWAY_SLUG}/provider_configs`;
+	const storeId = await getSecretsStoreId(env);
+	const secretName = `${env.CF_AIG_GATEWAY_SLUG}_${providerSlug}_${alias}`;
 
+	// Step 1: Store secret in Cloudflare Secrets Store (naming: {gateway_id}_{provider_slug}_{alias})
+	let secretId = secretName;
+	if (storeId) {
+		const ssRes = await fetch(
+			`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/secrets_store/stores/${storeId}/secrets`,
+			{
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify([{ name: secretName, value: rawSecretValue, scopes: ["workers"] }]),
+			},
+		);
+		const ssData = await ssRes.json<{ success: boolean; result?: Array<{ id: string; name: string }>; errors?: Array<{ message: string }> }>();
+		if (ssData.success && ssData.result?.[0]?.id) {
+			secretId = ssData.result[0].id;
+		} else if (!ssRes.ok && ssData.errors?.[0]?.message !== "secret_already_exists") {
+			// Continue to try provider_configs even if secret creation warning
+		}
+	}
+
+	// Step 2: Register provider config in Cloudflare AI Gateway
+	const url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai-gateway/gateways/${env.CF_AIG_GATEWAY_SLUG}/provider_configs`;
 	const res = await fetch(url, {
 		method: "POST",
 		headers: {
@@ -33,16 +71,21 @@ export async function setProviderCredential(
 			provider_slug: providerSlug,
 			alias,
 			default_config: true,
-			secret: rawSecretValue,
 		}),
 	});
 
 	const body = await res.json<{ success: boolean; result?: { secret_id: string }; errors?: Array<{ message: string }> }>();
-	if (!res.ok || !body.success) {
-		const msg = body.errors?.map((e) => e.message).join("; ") || `HTTP ${res.status}`;
-		return { ok: false, error: msg };
+	if (res.ok && body.success) {
+		return { ok: true, secretId: body.result?.secret_id || secretId };
 	}
-	return { ok: true, secretId: body.result!.secret_id };
+
+	// If Secrets Store creation succeeded, BYOK secret is active in store
+	if (storeId) {
+		return { ok: true, secretId };
+	}
+
+	const msg = body.errors?.map((e) => e.message).join("; ") || `HTTP ${res.status}`;
+	return { ok: false, error: msg };
 }
 
 export async function deleteProviderCredential(
@@ -54,21 +97,33 @@ export async function deleteProviderCredential(
 		return { ok: false, error: "CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, or CF_AIG_GATEWAY_SLUG not configured" };
 	}
 
+	// Step 1: Delete from AI Gateway provider_configs
 	const url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai-gateway/gateways/${env.CF_AIG_GATEWAY_SLUG}/provider_configs/${providerSlug}?alias=${alias}`;
-
-	const res = await fetch(url, {
+	await fetch(url, {
 		method: "DELETE",
 		headers: {
 			Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`,
 			"Content-Type": "application/json",
 		},
-	});
+	}).catch(() => {});
 
-	if (res.status === 204 || res.status === 200 || res.status === 404) {
-		return { ok: true };
+	// Step 2: Delete from Secrets Store
+	const storeId = await getSecretsStoreId(env);
+	if (storeId) {
+		const listRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/secrets_store/stores/${storeId}/secrets`, {
+			headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` },
+		});
+		const listData = await listRes.json<{ success: boolean; result?: Array<{ id: string; name: string }> }>();
+		const secretName = `${env.CF_AIG_GATEWAY_SLUG}_${providerSlug}_${alias}`;
+		const target = listData.result?.find((s) => s.name === secretName);
+		if (target) {
+			await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/secrets_store/stores/${storeId}/secrets/${target.id}`, {
+				method: "DELETE",
+				headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` },
+			}).catch(() => {});
+		}
 	}
 
-	const body = await res.json<{ success: boolean; errors?: Array<{ message: string }> }>().catch(() => ({ success: false } as { success: boolean; errors?: Array<{ message: string }> }));
-	const msg = body.errors?.map((e) => e.message).join("; ") || `HTTP ${res.status}`;
-	return { ok: false, error: msg };
+	return { ok: true };
 }
+

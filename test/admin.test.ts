@@ -52,3 +52,64 @@ test('Admin Health: google-ai-studio auth error', async () => {
   const res = await testGoogleAiStudio(env);
   assert.equal(res.state, 'AUTH_ERROR');
 });
+
+test('Provider Gateway: resolves default aliases and custom D1 routing rules', async () => {
+  const { resolveModel } = await import('../src/provider-gateway/cloudflare-ai-gateway');
+  const baseEnv = { CLOUDFLARE_ACCOUNT_ID: 'acc' };
+
+  // Default aliases
+  assert.equal(await resolveModel('fast', baseEnv), 'gemini-2.5-flash');
+  assert.equal(await resolveModel('coding', baseEnv), 'gemini-2.0-flash');
+  assert.equal(await resolveModel('research', baseEnv), 'gemini-2.5-pro');
+  assert.equal(await resolveModel('gemini-1.5-pro', baseEnv), 'gemini-1.5-pro');
+
+  // Custom alias with mock D1 database
+  const mockDb = {
+    prepare: (query: string) => ({
+      bind: (...args: any[]) => ({
+        first: async () => {
+          if (query.includes('routing_rules') && args[0] === 'custom-alias') {
+            return { model_id: 'custom-gemini-model' };
+          }
+          return null;
+        },
+      }),
+    }),
+  } as unknown as D1Database;
+
+  assert.equal(await resolveModel('custom-alias', { ...baseEnv, DM_DB: mockDb }), 'custom-gemini-model');
+});
+
+test('Provider Gateway: handleModels returns 200 with aliases and models list', async () => {
+  const { handleModels } = await import('../src/provider-gateway/models');
+  const res = handleModels();
+  assert.equal(res.status, 200);
+  const data = await res.json() as { object: string; data: Array<{ id: string }> };
+  assert.equal(data.object, 'list');
+  const ids = data.data.map(m => m.id);
+  assert.ok(ids.includes('fast'));
+  assert.ok(ids.includes('coding'));
+  assert.ok(ids.includes('research'));
+  assert.ok(ids.includes('gemini-2.5-flash'));
+});
+
+test('Admin API: unauthenticated request handling', async () => {
+  const { handleAdmin } = await import('../src/admin/router');
+  const env = { MCP_AUTH_TOKEN: 'secret123' } as AdminEnv;
+
+  // Unauthenticated API request returns 401 JSON
+  const apiReq = new Request('https://example.com/admin/api/models');
+  const apiRes = await handleAdmin(apiReq, env);
+  assert.equal(apiRes.status, 401);
+  const apiBody = await apiRes.json() as { error: string };
+  assert.equal(apiBody.error, 'unauthorized');
+
+  // Unauthenticated UI request renders login page
+  const uiReq = new Request('https://example.com/admin');
+  const uiRes = await handleAdmin(uiReq, env);
+  assert.equal(uiRes.status, 200);
+  const html = await uiRes.text();
+  assert.ok(html.includes('cf-control-mcp — Admin'));
+  assert.ok(html.includes('Sign in'));
+});
+

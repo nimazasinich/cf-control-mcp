@@ -11,6 +11,10 @@ import { gatewayCorHeaders } from "./auth";
 
 /** epoch timestamps are approximate release dates (rounded) */
 const GEMINI_MODELS: ModelListResponse["data"] = [
+	// Public routing aliases
+	{ id: "fast", object: "model", created: 1745000000, owned_by: "system" },
+	{ id: "coding", object: "model", created: 1739000000, owned_by: "system" },
+	{ id: "research", object: "model", created: 1745000000, owned_by: "system" },
 	// Gemini 2.0 family
 	{ id: "gemini-2.0-flash", object: "model", created: 1739000000, owned_by: "google" },
 	{ id: "gemini-2.0-flash-lite", object: "model", created: 1739000000, owned_by: "google" },

@@ -6,7 +6,18 @@
 import type { AdminEnv } from "./types";
 import { createSessionCookie, clearSessionCookie, isAuthenticated } from "./auth";
 import { loginPageHtml, dashboardHtml } from "./ui";
-import { listProviders, setProviderEnabled, recordHealthResult, logAudit, recentAudit, getProvider, setProviderAlias } from "./db";
+import {
+	listProviders,
+	setProviderEnabled,
+	recordHealthResult,
+	logAudit,
+	recentAudit,
+	getProvider,
+	setProviderAlias,
+	listModels,
+	listRoutingRules,
+	listRecentHealthChecks,
+} from "./db";
 import { testGoogleAiStudio } from "./health";
 import { setProviderCredential, deleteProviderCredential } from "./credentials";
 
@@ -44,11 +55,50 @@ export async function handleAdmin(request: Request, env: AdminEnv): Promise<Resp
 
 	if (path === "/admin/api/overview" && request.method === "GET") {
 		const providers = await listProviders(env);
-		return json({ providerCount: providers.length, healthyCount: providers.filter((p) => p.health_state === "HEALTHY").length });
+		const models = await listModels(env);
+		const rules = await listRoutingRules(env);
+		return json({
+			providerCount: providers.length,
+			healthyCount: providers.filter((p) => p.health_state === "HEALTHY").length,
+			modelCount: models.length,
+			routingRuleCount: rules.length,
+		});
 	}
 
 	if (path === "/admin/api/providers" && request.method === "GET") {
 		return json({ providers: await listProviders(env) });
+	}
+
+	if (path === "/admin/api/models" && request.method === "GET") {
+		return json({ models: await listModels(env) });
+	}
+
+	if (path === "/admin/api/routing" && request.method === "GET") {
+		return json({ rules: await listRoutingRules(env) });
+	}
+
+	if (path === "/admin/api/health" && request.method === "GET") {
+		return json({ checks: await listRecentHealthChecks(env) });
+	}
+
+	if (path === "/admin/api/usage" && request.method === "GET") {
+		const logs = await recentAudit(env, 100);
+		return json({
+			totalAuditEvents: logs.length,
+			recentActions: logs.slice(0, 10).map((l: any) => ({ action: l.action, at: l.at })),
+		});
+	}
+
+	if (path === "/admin/api/settings" && request.method === "GET") {
+		return json({
+			gatewaySlug: env.CF_AIG_GATEWAY_SLUG || "cf-control-mcp",
+			accountIdMasked: env.CLOUDFLARE_ACCOUNT_ID ? `${env.CLOUDFLARE_ACCOUNT_ID.slice(0, 6)}...${env.CLOUDFLARE_ACCOUNT_ID.slice(-4)}` : "not configured",
+			d1Database: "DM_DB",
+			hasCfToken: Boolean(env.CLOUDFLARE_API_TOKEN),
+			hasGatewayAuth: Boolean(env.GATEWAY_AUTH_TOKEN),
+			hasMcpAuth: Boolean(env.MCP_AUTH_TOKEN),
+			version: "1.8.0",
+		});
 	}
 
 	const providerMatch = path.match(/^\/admin\/api\/providers\/([^/]+)(\/(health-test|credential))?$/);

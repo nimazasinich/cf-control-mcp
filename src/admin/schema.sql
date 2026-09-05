@@ -53,3 +53,18 @@ CREATE TABLE IF NOT EXISTS audit_events (
 -- Seed the first real provider (disabled until credential is configured).
 INSERT OR IGNORE INTO providers (id, display_name, kind, enabled, health_state)
 VALUES ('google-ai-studio', 'Google AI Studio', 'google-ai-studio', 0, 'NOT_CONFIGURED');
+
+-- Seed model registry
+INSERT OR IGNORE INTO models (id, provider_id, public_alias, enabled)
+VALUES 
+  ('gemini-2.5-flash', 'google-ai-studio', 'fast', 1),
+  ('gemini-2.0-flash', 'google-ai-studio', 'coding', 1),
+  ('gemini-2.5-pro', 'google-ai-studio', 'research', 1);
+
+-- Seed default routing rules
+INSERT OR IGNORE INTO routing_rules (public_alias, model_id)
+VALUES
+  ('fast', 'gemini-2.5-flash'),
+  ('coding', 'gemini-2.0-flash'),
+  ('research', 'gemini-2.5-pro');
+

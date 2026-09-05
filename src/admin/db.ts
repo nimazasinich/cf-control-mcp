@@ -1,10 +1,25 @@
 /**
  * v1.8 Admin Console — D1 metadata access. Never reads/writes raw credentials.
  */
-import type { AdminEnv, ProviderRow } from "./types";
+import type { AdminEnv, ProviderRow, ModelRow, RoutingRuleRow, HealthCheckRow } from "./types";
 
 export async function listProviders(env: AdminEnv): Promise<ProviderRow[]> {
 	const { results } = await env.DM_DB.prepare("SELECT * FROM providers ORDER BY id").all<ProviderRow>();
+	return results ?? [];
+}
+
+export async function listModels(env: AdminEnv): Promise<ModelRow[]> {
+	const { results } = await env.DM_DB.prepare("SELECT * FROM models ORDER BY id").all<ModelRow>();
+	return results ?? [];
+}
+
+export async function listRoutingRules(env: AdminEnv): Promise<RoutingRuleRow[]> {
+	const { results } = await env.DM_DB.prepare("SELECT * FROM routing_rules ORDER BY public_alias").all<RoutingRuleRow>();
+	return results ?? [];
+}
+
+export async function listRecentHealthChecks(env: AdminEnv, limit = 20): Promise<HealthCheckRow[]> {
+	const { results } = await env.DM_DB.prepare("SELECT * FROM health_checks ORDER BY id DESC LIMIT ?").bind(limit).all<HealthCheckRow>();
 	return results ?? [];
 }
 

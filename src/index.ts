@@ -1110,7 +1110,7 @@ const toolsByName = new Map(tools.map((t) => [t.name, t]));
 // MCP method handlers
 // ---------------------------------------------------------------------------
 
-const SERVER_INFO = { name: "cf-control-mcp", version: "1.7.0" };
+const SERVER_INFO = { name: "cf-control-mcp", version: "1.8.0" };
 const PROTOCOL_VERSION = "2025-06-18";
 
 async function handleRpc(req: JsonRpcRequest, env: Env): Promise<JsonRpcSuccess | JsonRpcError> {
