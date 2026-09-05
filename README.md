@@ -1,217 +1,440 @@
+<div align="center">
+
+<img src="./assets/dreamworker-logo.webp" alt="DreamWorker" width="290" />
+
 # cf-control-mcp
 
-A private remote MCP server deployed on Cloudflare Workers for inspecting and managing a Cloudflare account. It supports Streamable HTTP at `/mcp`, OAuth discovery + PKCE for ChatGPT-compatible clients, and the original owner bearer-token path for legacy/desktop use.
+### Private infrastructure control plane for MCP clients
 
-## Security model
+**Cloudflare Workers · OAuth + PKCE · Cloudflare · Hugging Face · ProxyHarvest · Web · Sandboxed Execution**
 
-There are two separate credential layers:
+[![Version](https://img.shields.io/badge/version-1.5.0-B8860B?style=for-the-badge)](./package.json)
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?style=for-the-badge&logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
+[![MCP](https://img.shields.io/badge/MCP-2025--06--18-111827?style=for-the-badge)](https://modelcontextprotocol.io/)
+[![OAuth](https://img.shields.io/badge/OAuth-PKCE%20S256-7C3AED?style=for-the-badge&logo=auth0&logoColor=white)](#authentication--oauth)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](./src)
 
-1. **Client → MCP Worker** — OAuth 2.1-style authorization with PKCE and explicit owner approval. The existing `MCP_AUTH_TOKEN` is used as the owner approval secret and as the HMAC root key for stateless OAuth artifacts.
-2. **MCP Worker → Cloudflare API** — `CLOUDFLARE_API_TOKEN`, stored only as a Worker secret. It is never returned to MCP clients.
+<br />
 
-Rotating `MCP_AUTH_TOKEN` invalidates previously registered OAuth clients, authorization codes, access tokens, refresh tokens, and the legacy bearer credential.
+> **A private remote MCP server that turns a Cloudflare Worker into an authenticated control surface for infrastructure, provider APIs, web access, and controlled code execution.**
 
-## Deploy
+[Production MCP](https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp) · [Source](./src) · [OAuth Wrapper](./src/oauth-worker.ts) · [Plugin](./plugins/cf-control) · [Verification](./scripts/oauth_smoke.py)
 
-```bash
-npm install
-wrangler login
+<br />
 
-openssl rand -hex 32
-wrangler secret put MCP_AUTH_TOKEN
-wrangler secret put CLOUDFLARE_API_TOKEN
-wrangler secret put CLOUDFLARE_ACCOUNT_ID
+**Developed by DreamWorker**  
+*THE FUTURE IS CREATED TODAY*
 
-npm run deploy
-```
+</div>
 
-The production MCP endpoint is:
+---
+
+## ✦ What this project is
+
+`cf-control-mcp` is a **private, owner-approved remote MCP server** deployed on Cloudflare Workers. It exposes a single MCP endpoint that can inspect and manage Cloudflare resources, work with Hugging Face repositories, inspect ProxyHarvest gateway reachability, fetch/search the public web, run short-lived code in Piston, and dispatch real ephemeral Ubuntu jobs through GitHub Actions.
+
+The server is intentionally stateless at the MCP transport layer: one authenticated HTTP request produces one JSON-RPC response, without requiring Durable Objects or a long-lived SSE session.
 
 ```text
-https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp
+MCP Client
+   │
+   │  OAuth + PKCE  /  legacy bearer
+   ▼
+Cloudflare Worker ───────────────► Cloudflare API
+   │                              Hugging Face Hub API
+   │                              ProxyHarvest Gateway
+   │                              Public Web
+   │                              Piston Sandbox
+   └─────────────────────────────► GitHub Actions Ubuntu Runner
 ```
 
-`wrangler.jsonc` routes the Worker through `src/oauth-worker.ts`, which wraps the existing MCP implementation in `src/index.ts`.
+---
 
-## OAuth endpoints
+## ✦ Capability map
 
-The Worker exposes the metadata and endpoints required by an OAuth-capable MCP client:
+| Surface | What it provides | Representative tools |
+|---|---|---|
+| ☁️ **Cloudflare** | Zones, DNS, cache, Workers, routes, KV, token verification, direct API passthrough | `cf_list_zones`, `cf_list_dns_records`, `cf_purge_cache`, `cf_list_workers`, `cf_deploy_worker_module`, `cf_api_request` |
+| 🤗 **Hugging Face** | Identity, model search, repo metadata, file commits/deletes, generic Hub API access | `hf_whoami`, `hf_search_models`, `hf_repo_info`, `hf_commit_file`, `hf_api_request` |
+| 🌐 **Web** | Public HTTP fetches plus keyless DuckDuckGo HTML search | `web_fetch`, `web_search` |
+| ⚙️ **Execution** | Fast Piston snippets and full ephemeral GitHub Actions Ubuntu runners | `run_code`, `list_code_runtimes`, `gh_run_code`, `gh_get_run_result` |
+| 🛰️ **ProxyHarvest** | Gateway health, source reachability, TCP/TLS transport reachability | `proxyharvest_gateway_health`, `proxyharvest_source_check`, `proxyharvest_transport_probe` |
+| 🔐 **Auth** | OAuth discovery, DCR, PKCE S256, owner approval, access/refresh tokens, legacy bearer | `/.well-known/*`, `/register`, `/authorize`, `/token`, `/mcp` |
+
+> **Boundary:** ProxyHarvest Cloudflare checks are **reachability signals only**. They are never tunnel/protocol/WireGuard verification. Real `VERIFIED` status remains exclusive to the Local Real Test Bridge using `sing-box + curl`.
+
+---
+
+## ✦ Architecture
+
+```mermaid
+flowchart LR
+    C["MCP Client<br/>ChatGPT · Claude · Codex · Desktop"]
+    O["OAuth 2.1-style flow<br/>PKCE S256 + Owner Approval"]
+    L["Legacy Bearer Path"]
+    W["Cloudflare Worker<br/>cf-control-mcp"]
+
+    CF["Cloudflare API v4"]
+    HF["Hugging Face Hub"]
+    PH["ProxyHarvest Gateway"]
+    WEB["Public Web"]
+    P["Piston Sandbox"]
+    GH["GitHub Actions<br/>Ephemeral Ubuntu"]
+
+    C --> O --> W
+    C --> L --> W
+    W --> CF
+    W --> HF
+    W --> PH
+    W --> WEB
+    W --> P
+    W --> GH
+```
+
+### Design principles
+
+- **Private by default** — `/mcp` requires an accepted OAuth access token or the legacy owner bearer token.
+- **Provider secrets stay server-side** — Cloudflare, Hugging Face, and GitHub credentials remain Worker secrets.
+- **Read first, write deliberately** — focused destructive tools expose destructive annotations and, where implemented, require explicit confirmation flags.
+- **No fake verification** — reachability, deployment, and execution claims are returned from the actual provider/tool path.
+- **Stateless transport** — simple Streamable HTTP JSON-RPC without per-client server sessions.
+
+---
+
+## ✦ Authentication & OAuth
+
+There are two credential layers:
+
+| Layer | Credential | Purpose |
+|---|---|---|
+| **Client → MCP Worker** | OAuth access token or `MCP_AUTH_TOKEN` | Protects access to the MCP control surface |
+| **MCP Worker → Providers** | `CLOUDFLARE_API_TOKEN`, optional `HUGGINGFACE_TOKEN`, optional `GITHUB_PAT` | Authenticates server-side provider calls |
+
+The OAuth wrapper supports:
+
+- protected-resource discovery
+- authorization-server discovery
+- Dynamic Client Registration
+- Authorization Code flow
+- PKCE with `S256`
+- explicit owner approval page
+- access tokens
+- refresh tokens through `offline_access`
+- OAuth resource/audience binding
+- legacy owner-token compatibility
+
+### OAuth endpoints
 
 | Endpoint | Purpose |
 |---|---|
 | `/.well-known/oauth-protected-resource` | Protected-resource metadata |
 | `/.well-known/oauth-authorization-server` | Authorization-server metadata |
 | `/register` | Dynamic client registration |
-| `/authorize` | PKCE authorization + explicit owner approval page |
-| `/token` | Authorization-code and refresh-token exchange |
+| `/authorize` | PKCE authorization + owner approval |
+| `/token` | Authorization-code / refresh-token exchange |
 | `/mcp` | Streamable HTTP MCP endpoint |
 
-OAuth public clients must use PKCE with `S256`. The authorization page displays the requesting client and redirect URI, then requires the owner approval token before issuing an authorization code.
+### Current authorization behavior
 
-The OAuth scopes are:
+After the owner explicitly approves an OAuth client, the current implementation exposes the **same owner-approved tool catalog** as the legacy bearer path. This includes tools capable of writes and destructive operations.
 
-- `mcp:read`
-- `offline_access`
+The advertised OAuth scopes are currently:
 
-`offline_access` enables refresh tokens so clients can maintain connectivity without repeating authorization every hour.
+```text
+mcp:read
+offline_access
+```
 
-## ChatGPT Web / Pro
+`offline_access` enables refresh tokens. The current implementation does **not** use separate fine-grained OAuth scopes to hide individual write-capable tools after owner approval.
 
-Use the MCP URL only:
+> Generic passthrough tools such as `cf_api_request` and `hf_api_request` should be treated as privileged interfaces because their effective power follows the underlying provider token permissions.
+
+### Emergency revocation
+
+Rotating `MCP_AUTH_TOKEN` invalidates the stateless client-side authorization artifacts derived from it, including registered client IDs, authorization codes, access tokens, refresh tokens, and the legacy bearer credential.
+
+---
+
+## ✦ Quick start
+
+### 1. Install
+
+```bash
+npm install
+wrangler login
+```
+
+### 2. Configure required Worker secrets
+
+```bash
+openssl rand -hex 32
+wrangler secret put MCP_AUTH_TOKEN
+wrangler secret put CLOUDFLARE_API_TOKEN
+wrangler secret put CLOUDFLARE_ACCOUNT_ID
+```
+
+### 3. Optional provider integrations
+
+```bash
+# Hugging Face control tools
+wrangler secret put HUGGINGFACE_TOKEN
+
+# GitHub Actions real-runner execution
+wrangler secret put GITHUB_PAT
+
+# Optional; defaults to nimazasinich/cf-control-mcp
+wrangler secret put GITHUB_REPO
+```
+
+### 4. Deploy
+
+```bash
+npm run deploy
+```
+
+Production endpoint:
 
 ```text
 https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp
 ```
 
-When ChatGPT Web has Custom MCP / Developer Mode available for the account, it should discover OAuth from the MCP 401 challenge and `.well-known` metadata, dynamically register itself, open the `/authorize` approval page, and complete PKCE after owner approval.
+---
 
-For OAuth-connected clients, explicit owner approval grants the same private Cloudflare control surface as the legacy owner-token path. The consent page clearly warns that write/destructive tools are available; use a narrowly scoped Cloudflare API token.
+## ✦ Connecting an MCP client
 
-### OAuth-visible tools
+The repository includes a direct MCP configuration at:
 
-OAuth clients receive the full owner-approved tool catalog. v1.1.0 adds focused Worker operations on top of the existing DNS, cache, KV, and generic API tools:
+```text
+plugins/cf-control/.mcp.json
+```
 
-| Tool | Purpose |
-|---|---|
-| `cf_verify_api_token` | Verify the configured Cloudflare API token |
-| `cf_get_workers_subdomain` | Resolve the account workers.dev subdomain |
-| `cf_list_worker_routes` | List Worker routes for a zone |
-| `cf_deploy_worker_module` | Upload/deploy a single-module ES Worker with explicit destructive confirmation |
-| `cf_delete_worker` | Delete a Worker with explicit destructive confirmation |
-| `cf_api_request` | Generic Cloudflare API v4 passthrough for endpoints not covered by focused tools |
+It points to the production endpoint:
 
-`cf_deploy_worker_module` sends source directly to Cloudflare and does not persist it in the MCP Worker. The tool enforces conservative script/module-name validation, a 1.5 MB source limit, and `confirm_destructive=true`.
+```json
+{
+  "mcpServers": {
+    "cf_control": {
+      "type": "http",
+      "url": "https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp"
+    }
+  }
+}
+```
 
-## Legacy owner-token access
+OAuth-capable clients can discover the authorization server from the `401` challenge and the `.well-known` metadata, dynamically register, complete PKCE, and continue with access/refresh tokens after owner approval.
 
-The original direct bearer-token path is retained for trusted desktop/CI clients. Supplying the exact `MCP_AUTH_TOKEN` as the bearer token bypasses the OAuth flow and exposes the full existing toolset.
+Trusted legacy/desktop clients may use the owner bearer path directly:
 
 ```bash
-curl -X POST https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp \
+curl -X POST \
+  https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp \
   -H "Authorization: Bearer <MCP_AUTH_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-### Full legacy toolset
+---
 
-| Tool | What it does | Destructive? |
+## ✦ Cloudflare control surface
+
+### Focused operations
+
+| Tool | Purpose | Type |
 |---|---|---|
-| `cf_list_zones` | List domains on the account | no |
-| `cf_list_dns_records` | List DNS records for a zone | no |
-| `cf_create_dns_record` | Create a DNS record | yes |
-| `cf_delete_dns_record` | Delete a DNS record | yes |
-| `cf_purge_cache` | Purge edge cache | yes |
-| `cf_list_workers` | List deployed Worker scripts | no |
-| `cf_get_worker_metadata` | Get Worker bindings/routes metadata | no |
-| `cf_kv_list_namespaces` | List Workers KV namespaces | no |
-| `cf_kv_get_value` | Read a KV key | no |
-| `cf_kv_put_value` | Write a KV key | yes |
+| `cf_verify_api_token` | Verify the configured Cloudflare token | Read |
+| `cf_list_zones` | List/filter zones | Read |
+| `cf_list_dns_records` | Inspect DNS records | Read |
+| `cf_create_dns_record` | Create DNS record | Write |
+| `cf_delete_dns_record` | Delete DNS record | Destructive |
+| `cf_purge_cache` | Purge selected URLs or entire zone cache | Destructive |
+| `cf_list_workers` | List deployed Worker scripts | Read |
+| `cf_get_worker_metadata` | Inspect Worker/service metadata | Read |
+| `cf_get_workers_subdomain` | Resolve the workers.dev subdomain | Read |
+| `cf_list_worker_routes` | Inspect Worker routes for a zone | Read |
+| `cf_deploy_worker_module` | Deploy a single-module ES Worker | Destructive / Write |
+| `cf_delete_worker` | Delete Worker script | Destructive |
+| `cf_kv_list_namespaces` | List KV namespaces | Read |
+| `cf_kv_get_value` | Read KV value | Read |
+| `cf_kv_put_value` | Write KV value | Write |
+| `cf_api_request` | Generic Cloudflare API v4 passthrough | Privileged |
 
-## v1.1.0 focused Worker-control upgrade
+`cf_deploy_worker_module` sends source directly to Cloudflare, does not persist that source inside the MCP Worker, validates script/module names, caps source size, and requires `confirm_destructive=true`.
 
-The MCP server now exposes dedicated token verification, workers.dev discovery, Worker route listing, direct single-module Worker deployment, and Worker deletion tools. `cf_list_workers` also returns richer deployment metadata. The generic `cf_api_request` remains available for advanced Cloudflare API operations.
+`cf_api_request` exists for Cloudflare APIs that do not yet have focused tools, including areas such as zone settings, SSL/TLS, WAF/firewall, Access, R2, D1, Pages, Stream, Images, Load Balancing, and other account/zone endpoints allowed by the configured Cloudflare token.
 
-## Verification
+---
 
-Typecheck locally:
+## ✦ Hugging Face control surface
 
-```bash
-npx tsc --noEmit
-```
-
-The deployment workflow also runs `scripts/oauth_smoke.py` against the live Worker. The smoke test verifies:
-
-- OAuth protected-resource discovery
-- authorization-server discovery
-- Dynamic Client Registration
-- PKCE `S256`
-- explicit consent/approval page
-- authorization-code exchange
-- refresh-token grant
-- read-only OAuth `tools/list`
-- server-side blocking of write tools for OAuth clients
-- legacy owner-token compatibility
-- unauthenticated `401` with `WWW-Authenticate` resource metadata
-
-The smoke test never prints the owner secret or issued OAuth tokens.
-
-## Plugin package
-
-The repository also contains an OpenAI/Codex plugin package under `plugins/cf-control` and marketplace metadata under `.agents/plugins/marketplace.json`.
-
-The direct `.mcp.json` plugin package is useful for MCP-capable desktop environments. ChatGPT Web custom-app availability still depends on the account exposing Developer Mode / Custom MCP UI; the repository does not invent or hard-code a fake ChatGPT App ID.
-
-## Operational notes
-
-- Scope `CLOUDFLARE_API_TOKEN` to only the Cloudflare permissions required by the tools you intend to use.
-- Keep all secrets in Worker/GitHub secret stores, never in the repository.
-- The OAuth authorization artifacts are stateless and short-lived; PKCE binds authorization codes to the initiating client.
-- `MCP_AUTH_TOKEN` rotation is the emergency revocation mechanism for all client-side access.
-- Workers observability remains enabled in `wrangler.jsonc`.
-
-
-## v1.3.0 Hugging Face control tools
-
-Set an additional secret to enable the `hf_*` tools:
+Enable with:
 
 ```bash
 wrangler secret put HUGGINGFACE_TOKEN
 ```
 
-| Tool | Purpose | Destructive? |
-|---|---|---|
-| `hf_whoami` | Verify the token and return account info | no |
-| `hf_search_models` | Search models (public, or your own via `author`) | no |
-| `hf_repo_info` | Get metadata for a model/dataset/space | no |
-| `hf_list_repo_files` | List files in a repo at a revision | no |
-| `hf_create_repo` | Create a model/dataset/space repo | yes |
-| `hf_delete_repo` | Delete a repo | yes |
-| `hf_commit_file` | Create/update a file via the Commit API (non-LFS, ~5MB limit) | yes |
-| `hf_delete_file` | Delete a file via the Commit API | yes |
-| `hf_api_request` | Generic Hugging Face Hub API passthrough | yes |
-
-If `HUGGINGFACE_TOKEN` is not set, the `hf_*` tools return a clear configuration error instead of failing silently.
-
-## v1.5.0 Real sandbox via GitHub Actions (gh_run_code)
-
-`run_code` (Piston) is fast but stateless and can't install packages or make heavy network calls. For real execution — a full ephemeral Ubuntu VM, genuine internet access, `pip`/`npm`/`apt install`, up to 10 minutes runtime — this adds a second, asynchronous backend built on GitHub Actions:
-
 | Tool | Purpose |
 |---|---|
-| `gh_run_code` | Dispatches `.github/workflows/mcp-exec.yml` on this repo with your code, an optional `setup` command, and CLI `args`. Returns a `run_key` immediately (the workflow run itself takes a few seconds to schedule and then runs) |
-| `gh_get_run_result` | Poll with the `run_key` from `gh_run_code`. Returns `not_found_yet` / `queued` / `in_progress` while running, or `completed` with the conclusion and the full job log once done |
+| `hf_whoami` | Verify token and return account metadata |
+| `hf_search_models` | Search public or author-filtered models |
+| `hf_repo_info` | Read model/dataset/space metadata |
+| `hf_list_repo_files` | List repo tree at a revision |
+| `hf_create_repo` | Create model/dataset/space repo |
+| `hf_delete_repo` | Delete a repo |
+| `hf_commit_file` | Create/update one non-LFS file through the Commit API |
+| `hf_delete_file` | Delete a repo file through the Commit API |
+| `hf_api_request` | Generic Hugging Face Hub API passthrough |
 
-Setup:
+If `HUGGINGFACE_TOKEN` is not configured, `hf_*` tools return an explicit configuration error instead of silently falling back.
+
+---
+
+## ✦ Web & execution tools
+
+### Public web
+
+`web_fetch` provides outbound public HTTP/HTTPS access with custom method, headers, request body, and response-size control.
+
+It blocks obvious localhost/private/link-local/metadata destinations and caps returned body size. `web_search` performs keyless DuckDuckGo HTML search and is intentionally treated as a best-effort search surface because markup/rate limits are outside this project’s control.
+
+### Fast sandbox: Piston
+
+`run_code` sends short snippets to the public Piston service and returns execution output. Use `list_code_runtimes` to discover currently available runtime versions.
+
+This path is:
+
+- ephemeral
+- stateless
+- external to the Cloudflare account
+- not suitable for secrets or private data
+
+### Real runner: GitHub Actions
+
+`gh_run_code` dispatches `.github/workflows/mcp-exec.yml` and returns a `run_key`.
+
+`gh_get_run_result` polls that key until the Actions run is visible/completed, then returns status and job logs.
+
+The runner is a real ephemeral Ubuntu VM with internet access and can run optional setup commands such as `pip install`, `npm install`, or `apt` operations within the workflow’s limits.
+
+Required Worker secret:
 
 ```bash
 wrangler secret put GITHUB_PAT
-# optional, defaults to nimazasinich/cf-control-mcp:
-wrangler secret put GITHUB_REPO
 ```
 
-`GITHUB_PAT` needs `actions:write` and `contents:read` on the target repo (a fine-grained PAT scoped to just this repo is enough — it does not need to be a classic all-repo token).
+The token should be scoped to the target repository with the permissions required by the workflow dispatch/read path.
 
-Trust model, explicitly: this is intentionally full-VM arbitrary code execution — that's the point of the tool. `MCP_AUTH_TOKEN` / the OAuth owner-approval step is the actual access control, same as every other tool here; anyone who can call `gh_run_code` can run anything on this repo's Actions minutes and reach the open internet from it. Each run is a disposable Actions runner, torn down when the job ends — no state persists between calls.
+---
 
-This is asynchronous by nature (Actions runs take real time to schedule and finish), so the calling MCP client is expected to call `gh_run_code` once, then call `gh_get_run_result` repeatedly every few seconds until `status` is `completed`.
+## ✦ ProxyHarvest boundary
 
-## v1.4.0 Free code execution + open internet access
+The three ProxyHarvest tools are intentionally read-only:
 
-Two new tools, always on (no extra secret needed):
+| Tool | Meaning |
+|---|---|
+| `proxyharvest_gateway_health` | Gateway / edge / optional AI-provider health |
+| `proxyharvest_source_check` | Public source reachability |
+| `proxyharvest_transport_probe` | TCP/TLS transport reachability |
 
-| Tool | Purpose | Notes |
-|---|---|---|
-| `run_code` | Run a code snippet for free in the public [Piston](https://github.com/engineer-man/piston) sandbox (`emkc.org`) and return stdout/stderr/exit code | Stateless, ephemeral, no account — don't pass secrets through it |
-| `list_code_runtimes` | List the languages/versions currently available in that sandbox | Read-only |
-| `web_fetch` | Fetch any public URL through the Worker's own outbound network (GET/POST/etc., custom headers/body) | This is how a client with no internet access of its own reaches the web |
+They explicitly return classifications that distinguish gateway/source/transport reachability from real proxy verification.
 
-`web_fetch` refuses `localhost`, private IP ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local/metadata addresses (`169.254.0.0/16`, incl. the AWS/GCP/Azure/Cloudflare metadata IP), and `*.internal` hostnames, so it can't be turned into a pivot into this Worker's own cloud network. It caps returned response bodies at 1 MB (200 KB by default) and always returns the response as text.
+**Reachable ≠ Verified.**
 
-`run_code` executes on `emkc.org`'s public infrastructure, not inside this Worker or your Cloudflare account — code and inputs leave your account's boundary the same way any third-party API call does. Piston is free and requires no API key, which is also why there's no built-in rate limiting here beyond Piston's own; expect it to throttle under heavy use.
+---
 
-Both tools carry `openWorldHint: true` and, under the current OAuth implementation, are available to any client that completed the owner-approval flow in `/authorize` — the same as every other tool in this server. There is no separate scope or additional consent step for code execution or arbitrary outbound fetches; if you want to gate them more tightly, that would need to be added as an explicit change (e.g. a separate OAuth scope, or splitting them into their own Worker with its own `MCP_AUTH_TOKEN`).
+## ✦ Verification
 
-## v1.2.0 ProxyHarvest control tools
+### Local static checks
 
-The private MCP exposes three focused read-only ProxyHarvest tools: `proxyharvest_gateway_health`, `proxyharvest_source_check`, and `proxyharvest_transport_probe`. They operate against the live Cloudflare gateway and preserve the architecture boundary: Cloudflare source/transport reachability is never protocol, tunnel, or WireGuard verification. Real `VERIFIED` status remains exclusive to the Local Real Test Bridge using sing-box + curl.
+```bash
+npm ci
+npx tsc --noEmit
+python3 -m py_compile scripts/oauth_smoke.py scripts/apex_cf_bridge.py
+```
+
+### Live OAuth/MCP smoke test
+
+The deployment workflow executes `scripts/oauth_smoke.py` against the live Worker. The current smoke test validates:
+
+- protected-resource discovery
+- authorization-server discovery
+- Dynamic Client Registration
+- PKCE `S256`
+- owner approval UI
+- authorization-code exchange
+- access + refresh tokens
+- OAuth `tools/list`
+- presence of the owner-approved write-capable catalog
+- a harmless `GET /zones` through `cf_api_request` using OAuth
+- refresh-token grant
+- legacy bearer compatibility
+- optional Hugging Face live check
+- unauthenticated `401` + `WWW-Authenticate` resource metadata
+
+The smoke test does not print the owner secret or issued OAuth tokens.
+
+---
+
+## ✦ Repository layout
+
+```text
+.
+├── src/
+│   ├── index.ts              # MCP server + tool handlers
+│   └── oauth-worker.ts       # OAuth discovery, PKCE, tokens, MCP wrapper
+├── scripts/
+│   └── oauth_smoke.py        # live end-to-end OAuth/MCP verification
+├── plugins/cf-control/
+│   ├── .mcp.json             # remote MCP connection descriptor
+│   └── skills/               # OpenAI/Codex skill package
+├── .github/workflows/
+│   ├── ci.yml                # static verification
+│   ├── deploy.yml            # deploy + live smoke verification
+│   └── mcp-exec.yml          # ephemeral real-runner execution backend
+├── assets/
+│   └── dreamworker-logo.webp # DreamWorker developer brand
+├── wrangler.jsonc
+├── package.json
+└── README.md
+```
+
+---
+
+## ✦ Operational notes
+
+- Keep all provider credentials in Worker/GitHub secret stores, never in source control.
+- Scope `CLOUDFLARE_API_TOKEN` to the minimum provider permissions needed for the enabled tools.
+- Treat generic API passthroughs as privileged interfaces.
+- Treat `gh_run_code` as intentional arbitrary code execution on disposable Actions runners.
+- Treat Piston as a public third-party sandbox; never send secrets through it.
+- Verify state after writes using focused read tools when practical.
+- Workers observability remains enabled through `wrangler.jsonc`.
+
+---
+
+## ✦ Roadmap direction
+
+The current `1.5.0` architecture already behaves as a multi-provider infrastructure MCP gateway. Natural next upgrades include:
+
+- fine-grained OAuth scopes per capability family
+- schema-first argument validation
+- provider-aware pagination helpers
+- rate limiting / abuse controls
+- structured audit events
+- safer generic passthrough policies
+- richer MCP resources/prompts alongside tools
+- explicit capability discovery and health reporting
+
+---
+
+<div align="center">
+
+<img src="./assets/dreamworker-logo.webp" alt="DreamWorker" width="190" />
+
+### Built for operators who want real control, not simulated success.
+
+**DreamWorker**  
+**THE FUTURE IS CREATED TODAY**
+
+<sub>cf-control-mcp · private remote infrastructure tooling through MCP</sub>
+
+</div>
