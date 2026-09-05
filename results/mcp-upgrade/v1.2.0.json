@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "version": "1.2.0",
+  "executed_at": "2026-09-05T10:41:48.372908Z",
+  "added_tools": [
+    "proxyharvest_gateway_health",
+    "proxyharvest_source_check",
+    "proxyharvest_transport_probe"
+  ],
+  "verification_boundary": "local-real-test-bridge-only",
+  "gateway": "https://proxyharvest-gateway.amin-chinisaz-edu.workers.dev"
+}

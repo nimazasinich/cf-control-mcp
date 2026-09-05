@@ -32,6 +32,9 @@ READ_ONLY_TOOLS = {
     "cf_verify_api_token",
     "cf_get_workers_subdomain",
     "cf_list_worker_routes",
+    "proxyharvest_gateway_health",
+    "proxyharvest_source_check",
+    "proxyharvest_transport_probe",
 }
 WRITE_TOOLS = {
     "cf_create_dns_record",

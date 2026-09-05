@@ -149,3 +149,8 @@ The direct `.mcp.json` plugin package is useful for MCP-capable desktop environm
 - The OAuth authorization artifacts are stateless and short-lived; PKCE binds authorization codes to the initiating client.
 - `MCP_AUTH_TOKEN` rotation is the emergency revocation mechanism for all client-side access.
 - Workers observability remains enabled in `wrangler.jsonc`.
+
+
+## v1.2.0 ProxyHarvest control tools
+
+The private MCP exposes three focused read-only ProxyHarvest tools: `proxyharvest_gateway_health`, `proxyharvest_source_check`, and `proxyharvest_transport_probe`. They operate against the live Cloudflare gateway and preserve the architecture boundary: Cloudflare source/transport reachability is never protocol, tunnel, or WireGuard verification. Real `VERIFIED` status remains exclusive to the Local Real Test Bridge using sing-box + curl.

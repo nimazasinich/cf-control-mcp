@@ -140,7 +140,78 @@ async function cfUploadWorkerModule(
 	return body;
 }
 
+const PROXYHARVEST_MCP_V12 = "1.2.0";
+const PROXYHARVEST_GATEWAY_BASE = "https://proxyharvest-gateway.amin-chinisaz-edu.workers.dev";
+
+function proxyHarvestBase(args: Record<string, unknown>): string {
+	const raw = String(args.gateway_url ?? PROXYHARVEST_GATEWAY_BASE).trim().replace(/\/$/, "");
+	const u = new URL(raw);
+	if (u.protocol !== "https:") throw new Error("gateway_url must use https");
+	return u.toString().replace(/\/$/, "");
+}
+
+async function proxyHarvestJson(base: string, path: string, init: RequestInit = {}): Promise<any> {
+	const res = await fetch(base + path, { ...init, headers: { Accept: "application/json", ...(init.headers ?? {}) } });
+	const body = await res.json().catch(() => null);
+	if (!res.ok) throw new Error(`ProxyHarvest gateway HTTP ${res.status} on ${path}`);
+	if (!body || typeof body !== "object") throw new Error(`ProxyHarvest gateway returned non-JSON on ${path}`);
+	return body;
+}
+
 const tools: ToolDef[] = [
+	{
+		name: "proxyharvest_gateway_health",
+		description: "Check the live ProxyHarvest Cloudflare gateway, Cloud Edge Relay boundary, and optional HF repair-advisor health. This never represents protocol/tunnel/WireGuard verification.",
+		inputSchema: { type: "object", properties: {
+			gateway_url: { type: "string", description: "Optional HTTPS gateway base URL" },
+			deep_ai: { type: "boolean", description: "Run a real HF provider health check when true" },
+		} },
+		annotations: { readOnlyHint: true, openWorldHint: true },
+		handler: async (args) => {
+			const base = proxyHarvestBase(args);
+			const [gateway, edge, ai] = await Promise.all([
+				proxyHarvestJson(base, "/health"),
+				proxyHarvestJson(base, "/bridge/health"),
+				proxyHarvestJson(base, `/ai/health${args.deep_ai === true ? "?deep=1" : ""}`),
+			]);
+			return { ok: Boolean(gateway.ok && edge.ok && ai.ok), gateway, edge, ai, verification: false, verification_source: "local-real-test-bridge-only" };
+		},
+	},
+	{
+		name: "proxyharvest_source_check",
+		description: "Check one public ProxyHarvest source through the Cloudflare source-check route. This is source reachability only, never proxy verification.",
+		inputSchema: { type: "object", properties: {
+			url: { type: "string", description: "Public HTTP/HTTPS source URL" },
+			gateway_url: { type: "string", description: "Optional HTTPS gateway base URL" },
+		}, required: ["url"] },
+		annotations: { readOnlyHint: true, openWorldHint: true },
+		handler: async (args) => {
+			const base = proxyHarvestBase(args);
+			const source = String(args.url ?? "").trim();
+			if (!/^https?:\/\//i.test(source)) throw new Error("url must be public http/https");
+			const result = await proxyHarvestJson(base, `/source-check?url=${encodeURIComponent(source)}`);
+			return { ...result, source, verification: false, classification: "source-reachability" };
+		},
+	},
+	{
+		name: "proxyharvest_transport_probe",
+		description: "Probe TCP/TLS transport reachability through the ProxyHarvest Cloudflare gateway. Reachable must never be interpreted as protocol/tunnel/WireGuard Verified.",
+		inputSchema: { type: "object", properties: {
+			host: { type: "string", description: "Public hostname or IP" },
+			port: { type: "number", description: "TCP port 1-65535" },
+			tls: { type: "boolean", description: "Prefer TLS probe" },
+			gateway_url: { type: "string", description: "Optional HTTPS gateway base URL" },
+		}, required: ["host"] },
+		annotations: { readOnlyHint: true, openWorldHint: true },
+		handler: async (args) => {
+			const base = proxyHarvestBase(args);
+			const host = String(args.host ?? "").trim();
+			const port = Math.max(1, Math.min(65535, Number(args.port ?? 443) || 443));
+			const tls = args.tls === true ? "1" : "0";
+			const result = await proxyHarvestJson(base, `/probe?host=${encodeURIComponent(host)}&port=${port}&tls=${tls}`);
+			return { ...result, verification: false, classification: "transport-reachability", verified: false };
+		},
+	},
 	{
 		name: "cf_api_request",
 		description:
@@ -491,7 +562,7 @@ const toolsByName = new Map(tools.map((t) => [t.name, t]));
 // MCP method handlers
 // ---------------------------------------------------------------------------
 
-const SERVER_INFO = { name: "cf-control-mcp", version: "1.1.0" };
+const SERVER_INFO = { name: "cf-control-mcp", version: "1.2.0" };
 const PROTOCOL_VERSION = "2025-06-18";
 
 async function handleRpc(req: JsonRpcRequest, env: Env): Promise<JsonRpcSuccess | JsonRpcError> {
