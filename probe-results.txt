@@ -1,0 +1,49 @@
+=== TOKEN_A (CF_API_TOKEN/CF_maxAPI_TOKEN/CF_TOKEN1/CF_TOKEN3) ===
+  token verify:     http=400 status=parse_error
+  ai-gateway list:  http=404 success=False errors=[7003]
+  secrets_store list: http=404 success=False errors=[7003]
+  workers list:     http=404 success=False
+  d1 list:          http=404 success=False errors=[7003]
+
+=== TOKEN_B (CF_TOKEN_DNS) ===
+  token verify:     http=400 status=parse_error
+  ai-gateway list:  http=404 success=False errors=[7003]
+  secrets_store list: http=404 success=False errors=[7003]
+  workers list:     http=404 success=False
+  d1 list:          http=404 success=False errors=[7003]
+
+=== TOKEN_C (CF_TOKEN_WORKERS/CF_TOKEN4) ===
+  token verify:     http=400 status=parse_error
+  ai-gateway list:  http=404 success=False errors=[7003]
+  secrets_store list: http=404 success=False errors=[7003]
+  workers list:     http=404 success=False
+  d1 list:          http=404 success=False errors=[7003]
+
+=== TOKEN_D (CF_TOKEN5) ===
+  token verify:     http=400 status=parse_error
+  ai-gateway list:  http=404 success=False errors=[7003]
+  secrets_store list: http=404 success=False errors=[7003]
+  workers list:     http=404 success=False
+  d1 list:          http=404 success=False errors=[7003]
+
+=== TOKEN_E (CF_TOKEN2) ===
+  token verify:     http=400 status=parse_error
+  ai-gateway list:  http=404 success=False errors=[7003]
+  secrets_store list: http=404 success=False errors=[7003]
+  workers list:     http=404 success=False
+  d1 list:          http=404 success=False errors=[7003]
+
+=== TOKEN_F (new candidate, updated CLOUDFLARE_API_TOKEN) ===
+  token verify:     http=200 status=active
+  ai-gateway list:  http=403 success=False errors=[10000]
+  secrets_store list: http=403 success=False errors=[10000]
+  workers list:     http=403 success=False
+  d1 list:          http=401 success=False errors=[10000]
+
+=== TOKEN_G (new candidate #2) ===
+  token verify:     http=200 status=active
+  ai-gateway list:  http=403 success=False errors=[10000]
+  secrets_store list: http=403 success=False errors=[10000]
+  workers list:     http=403 success=False
+  d1 list:          http=401 success=False errors=[10000]
+
