@@ -2,6 +2,7 @@
   "name": "cf-control-mcp",
   "version": "1.1.0",
   "private": true,
+  "description": "Private remote MCP server on Cloudflare Workers for owner-approved Cloudflare account control.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
