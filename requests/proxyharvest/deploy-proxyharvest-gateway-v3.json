@@ -1,0 +1,10 @@
+{
+  "request_id": "deploy-proxyharvest-gateway-v3",
+  "project": "ProxyHarvest",
+  "operation": "deploy_worker",
+  "script_name": "proxyharvest-gateway",
+  "source_path": "deploy/proxyharvest/worker.mjs",
+  "compatibility_date": "2026-09-05",
+  "confirm_destructive": true,
+  "reason": "Deploy the current ProxyHarvest v38 Cloudflare gateway from latest main, replacing the old v3.0.0 allowlist/HEAD probe implementation, then verify public /health."
+}
