@@ -173,6 +173,45 @@ wrangler secret put HUGGINGFACE_TOKEN
 
 If `HUGGINGFACE_TOKEN` is not set, the `hf_*` tools return a clear configuration error instead of failing silently.
 
+## v1.5.0 Real sandbox via GitHub Actions (gh_run_code)
+
+`run_code` (Piston) is fast but stateless and can't install packages or make heavy network calls. For real execution — a full ephemeral Ubuntu VM, genuine internet access, `pip`/`npm`/`apt install`, up to 10 minutes runtime — this adds a second, asynchronous backend built on GitHub Actions:
+
+| Tool | Purpose |
+|---|---|
+| `gh_run_code` | Dispatches `.github/workflows/mcp-exec.yml` on this repo with your code, an optional `setup` command, and CLI `args`. Returns a `run_key` immediately (the workflow run itself takes a few seconds to schedule and then runs) |
+| `gh_get_run_result` | Poll with the `run_key` from `gh_run_code`. Returns `not_found_yet` / `queued` / `in_progress` while running, or `completed` with the conclusion and the full job log once done |
+
+Setup:
+
+```bash
+wrangler secret put GITHUB_PAT
+# optional, defaults to nimazasinich/cf-control-mcp:
+wrangler secret put GITHUB_REPO
+```
+
+`GITHUB_PAT` needs `actions:write` and `contents:read` on the target repo (a fine-grained PAT scoped to just this repo is enough — it does not need to be a classic all-repo token).
+
+Trust model, explicitly: this is intentionally full-VM arbitrary code execution — that's the point of the tool. `MCP_AUTH_TOKEN` / the OAuth owner-approval step is the actual access control, same as every other tool here; anyone who can call `gh_run_code` can run anything on this repo's Actions minutes and reach the open internet from it. Each run is a disposable Actions runner, torn down when the job ends — no state persists between calls.
+
+This is asynchronous by nature (Actions runs take real time to schedule and finish), so the calling MCP client is expected to call `gh_run_code` once, then call `gh_get_run_result` repeatedly every few seconds until `status` is `completed`.
+
+## v1.4.0 Free code execution + open internet access
+
+Two new tools, always on (no extra secret needed):
+
+| Tool | Purpose | Notes |
+|---|---|---|
+| `run_code` | Run a code snippet for free in the public [Piston](https://github.com/engineer-man/piston) sandbox (`emkc.org`) and return stdout/stderr/exit code | Stateless, ephemeral, no account — don't pass secrets through it |
+| `list_code_runtimes` | List the languages/versions currently available in that sandbox | Read-only |
+| `web_fetch` | Fetch any public URL through the Worker's own outbound network (GET/POST/etc., custom headers/body) | This is how a client with no internet access of its own reaches the web |
+
+`web_fetch` refuses `localhost`, private IP ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local/metadata addresses (`169.254.0.0/16`, incl. the AWS/GCP/Azure/Cloudflare metadata IP), and `*.internal` hostnames, so it can't be turned into a pivot into this Worker's own cloud network. It caps returned response bodies at 1 MB (200 KB by default) and always returns the response as text.
+
+`run_code` executes on `emkc.org`'s public infrastructure, not inside this Worker or your Cloudflare account — code and inputs leave your account's boundary the same way any third-party API call does. Piston is free and requires no API key, which is also why there's no built-in rate limiting here beyond Piston's own; expect it to throttle under heavy use.
+
+Both tools carry `openWorldHint: true` and, under the current OAuth implementation, are available to any client that completed the owner-approval flow in `/authorize` — the same as every other tool in this server. There is no separate scope or additional consent step for code execution or arbitrary outbound fetches; if you want to gate them more tightly, that would need to be added as an explicit change (e.g. a separate OAuth scope, or splitting them into their own Worker with its own `MCP_AUTH_TOKEN`).
+
 ## v1.2.0 ProxyHarvest control tools
 
 The private MCP exposes three focused read-only ProxyHarvest tools: `proxyharvest_gateway_health`, `proxyharvest_source_check`, and `proxyharvest_transport_probe`. They operate against the live Cloudflare gateway and preserve the architecture boundary: Cloudflare source/transport reachability is never protocol, tunnel, or WireGuard verification. Real `VERIFIED` status remains exclusive to the Local Real Test Bridge using sing-box + curl.

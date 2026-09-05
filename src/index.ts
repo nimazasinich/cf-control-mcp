@@ -25,6 +25,10 @@ export interface Env {
 	CLOUDFLARE_ACCOUNT_ID: string;
 	/** Optional. Set with `wrangler secret put HUGGINGFACE_TOKEN` to enable the hf_* tools. */
 	HUGGINGFACE_TOKEN?: string;
+	/** Optional. Set with `wrangler secret put GITHUB_PAT` to enable the gh_* real-sandbox tools. */
+	GITHUB_PAT?: string;
+	/** Optional. "owner/repo" that hosts .github/workflows/mcp-exec.yml. Defaults to nimazasinich/cf-control-mcp. */
+	GITHUB_REPO?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +201,128 @@ function base64EncodeUtf8(text: string): string {
 	let binary = "";
 	for (const byte of bytes) binary += String.fromCharCode(byte);
 	return btoa(binary);
+}
+
+// ---------------------------------------------------------------------------
+// Sandbox code execution (Piston, emkc.org) — free, no API key required.
+// ---------------------------------------------------------------------------
+
+/** Executes a snippet via the public Piston API. Ephemeral, stateless, no secrets involved. */
+async function pistonExecute(
+	language: string,
+	version: string,
+	code: string,
+	stdin: string,
+	args: string[],
+): Promise<any> {
+	const res = await fetch("https://emkc.org/api/v2/piston/execute", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			language,
+			version: version || "*",
+			files: [{ content: code }],
+			stdin: stdin || "",
+			args: args || [],
+		}),
+	});
+	const contentType = res.headers.get("content-type") ?? "";
+	const body = contentType.includes("application/json") ? await res.json() : await res.text();
+	if (!res.ok) {
+		throw new Error(`Piston API error (${res.status}): ${typeof body === "string" ? body : JSON.stringify(body)}`);
+	}
+	return body;
+}
+
+async function pistonRuntimes(): Promise<any> {
+	const res = await fetch("https://emkc.org/api/v2/piston/runtimes");
+	if (!res.ok) throw new Error(`Piston API error (${res.status}) listing runtimes`);
+	return await res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Generic outbound internet access, with an SSRF guard so the client cannot
+// use this Worker to reach its own cloud-internal network.
+// ---------------------------------------------------------------------------
+
+const BLOCKED_HOSTNAME_PATTERNS: RegExp[] = [
+	/^localhost$/i,
+	/^127\./,
+	/^0\.0\.0\.0$/,
+	/^10\./,
+	/^169\.254\./, // link-local, incl. cloud metadata services (AWS/GCP/Azure/Cloudflare)
+	/^192\.168\./,
+	/^172\.(1[6-9]|2\d|3[01])\./,
+	/^\[?::1\]?$/,
+	/^\[?fc00:/i,
+	/^\[?fe80:/i,
+	/\.internal$/i,
+	/metadata\.google\.internal$/i,
+];
+
+function isBlockedHost(hostname: string): boolean {
+	return BLOCKED_HOSTNAME_PATTERNS.some((re) => re.test(hostname));
+}
+
+// ---------------------------------------------------------------------------
+// Real sandbox execution via GitHub Actions (.github/workflows/mcp-exec.yml).
+// A full ephemeral Ubuntu VM with real internet access, free on GitHub's
+// Actions minutes, dispatched and polled through the REST API.
+// ---------------------------------------------------------------------------
+
+function ghRepo(env: Env): string {
+	return (env.GITHUB_REPO || "nimazasinich/cf-control-mcp").trim();
+}
+
+async function ghFetch(env: Env, path: string, init: RequestInit = {}): Promise<any> {
+	if (!env.GITHUB_PAT) throw new Error("GITHUB_PAT is not configured as a Worker secret");
+	const res = await fetch(`https://api.github.com${path}`, {
+		...init,
+		headers: {
+			Authorization: `Bearer ${env.GITHUB_PAT}`,
+			Accept: "application/vnd.github+json",
+			"X-GitHub-Api-Version": "2022-11-28",
+			"User-Agent": "cf-control-mcp",
+			...(init.headers ?? {}),
+		},
+	});
+	if (res.status === 204) return null;
+	const contentType = res.headers.get("content-type") ?? "";
+	const body = contentType.includes("application/json") ? await res.json() : await res.text();
+	if (!res.ok) {
+		throw new Error(`GitHub API error (${res.status}) on ${path}: ${typeof body === "string" ? body : JSON.stringify(body)}`);
+	}
+	return body;
+}
+
+function newRunKey(): string {
+	return crypto.randomUUID();
+}
+
+/** Finds the workflow run whose dynamic run-name embeds this run_key. May return null if not visible yet. */
+async function ghFindRunByKey(env: Env, runKey: string): Promise<any | null> {
+	const repo = ghRepo(env);
+	const data = await ghFetch(env, `/repos/${repo}/actions/workflows/mcp-exec.yml/runs?event=workflow_dispatch&per_page=20`);
+	const runs: any[] = data.workflow_runs ?? [];
+	return runs.find((r) => typeof r.display_title === "string" && r.display_title.includes(runKey)) ?? null;
+}
+
+/** Fetches the plain-text log for the first job of a completed run. */
+async function ghGetRunLog(env: Env, runId: number): Promise<string> {
+	const repo = ghRepo(env);
+	const jobsData = await ghFetch(env, `/repos/${repo}/actions/runs/${runId}/jobs`);
+	const job = (jobsData.jobs ?? [])[0];
+	if (!job) return "(no jobs found for this run yet)";
+	const res = await fetch(`https://api.github.com/repos/${repo}/actions/jobs/${job.id}/logs`, {
+		headers: {
+			Authorization: `Bearer ${env.GITHUB_PAT}`,
+			Accept: "application/vnd.github+json",
+			"User-Agent": "cf-control-mcp",
+		},
+	});
+	if (!res.ok) throw new Error(`GitHub API error (${res.status}) fetching job logs`);
+	const text = await res.text();
+	return text.length > 60_000 ? `${text.slice(0, 60_000)}\n... [truncated]` : text;
 }
 
 const tools: ToolDef[] = [
@@ -830,6 +956,178 @@ const tools: ToolDef[] = [
 			return await hfFetch(env, path, init);
 		},
 	},
+
+	{
+		name: "run_code",
+		description:
+			"Execute a short code snippet for free in an ephemeral public sandbox (Piston, emkc.org) and return " +
+			"stdout, stderr, and exit code. Supports common languages (python, javascript/node, typescript, bash, " +
+			"go, rust, java, c, cpp, etc — call list_code_runtimes for the exact catalog). No account or credentials " +
+			"involved, no persistent state, and nothing here touches the Cloudflare/HF accounts. Not suitable for " +
+			"secrets or private data: the sandbox is a shared free third-party service.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				language: { type: "string", description: "Piston language id, e.g. 'python', 'javascript', 'bash', 'go'" },
+				version: { type: "string", description: "Language version, or '*' for latest. Default '*'." },
+				code: { type: "string", description: "Source code to run" },
+				stdin: { type: "string", description: "Optional stdin to feed the program" },
+				args: { type: "array", items: { type: "string" }, description: "Optional CLI args passed to the program" },
+			},
+			required: ["language", "code"],
+		},
+		annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+		handler: async (args) => {
+			const language = String(args.language ?? "").trim();
+			const code = String(args.code ?? "");
+			if (!language) throw new Error("language is required");
+			if (!code.trim()) throw new Error("code is empty");
+			if (code.length > 200_000) throw new Error("code exceeds 200 KB sandbox limit");
+			const version = String(args.version ?? "*");
+			const stdin = String(args.stdin ?? "");
+			const cliArgs = Array.isArray(args.args) ? args.args.map((a) => String(a)).slice(0, 32) : [];
+			return await pistonExecute(language, version, code, stdin, cliArgs);
+		},
+	},
+	{
+		name: "list_code_runtimes",
+		description: "List the languages/versions currently available in the free Piston sandbox used by run_code.",
+		inputSchema: { type: "object", properties: {} },
+		annotations: { readOnlyHint: true, openWorldHint: true },
+		handler: async () => await pistonRuntimes(),
+	},
+	{
+		name: "web_fetch",
+		description:
+			"Fetch any public URL from the open internet through this Worker's outbound network and return status, " +
+			"headers, and a (possibly truncated) body. Use this when the client otherwise has no way to reach the " +
+			"internet. Refuses requests to localhost, private/link-local IP ranges, and cloud metadata endpoints to " +
+			"protect this Worker's own environment — it cannot be used to pivot into internal infrastructure.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				url: { type: "string", description: "Absolute http(s) URL" },
+				method: { type: "string", description: "HTTP method. Default GET." },
+				headers: { type: "object", description: "Optional request headers as key/value pairs" },
+				body: { type: "string", description: "Optional raw request body (string). Ignored for GET/HEAD." },
+				max_bytes: { type: "number", description: "Max response bytes to return (default 200000, max 1000000)" },
+			},
+			required: ["url"],
+		},
+		annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+		handler: async (args) => {
+			const urlStr = String(args.url ?? "").trim();
+			if (!urlStr) throw new Error("url is required");
+			let parsed: URL;
+			try {
+				parsed = new URL(urlStr);
+			} catch {
+				throw new Error("invalid url");
+			}
+			if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+				throw new Error("only http/https URLs are allowed");
+			}
+			if (isBlockedHost(parsed.hostname)) {
+				throw new Error("this host is blocked (private/internal/metadata network range)");
+			}
+			const method = String(args.method ?? "GET").toUpperCase();
+			const init: RequestInit = { method };
+			if (args.headers && typeof args.headers === "object") {
+				init.headers = Object.fromEntries(
+					Object.entries(args.headers as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
+				);
+			}
+			if (args.body !== undefined && method !== "GET" && method !== "HEAD") {
+				init.body = String(args.body);
+			}
+			const res = await fetch(parsed.toString(), init);
+			const maxBytes = Math.min(Number(args.max_bytes ?? 200_000) || 200_000, 1_000_000);
+			const buf = await res.arrayBuffer();
+			const truncated = buf.byteLength > maxBytes;
+			const bodyBytes = truncated ? buf.slice(0, maxBytes) : buf;
+			const bodyText = new TextDecoder("utf-8", { fatal: false, ignoreBOM: false }).decode(bodyBytes);
+			return {
+				status: res.status,
+				ok: res.ok,
+				headers: Object.fromEntries(res.headers.entries()),
+				truncated,
+				body: bodyText,
+			};
+		},
+	},
+
+	{
+		name: "gh_run_code",
+		description:
+			"Run code for real in an ephemeral, full Ubuntu VM with genuine internet access, via a GitHub Actions " +
+			"workflow (.github/workflows/mcp-exec.yml) dispatched on this repo. Unlike run_code (Piston), this can " +
+			"install packages (apt/pip/npm/etc via 'setup'), make real outbound network calls, and run for up to " +
+			"10 minutes. It's asynchronous: this only starts the run and returns a run_key. Call gh_get_run_result " +
+			"with that run_key afterward (poll every few seconds) to get status and logs. Requires GITHUB_PAT to be " +
+			"configured as a Worker secret with 'actions:write' + 'contents:read' on the target repo.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				language: { type: "string", description: "python | node | bash | go | ruby | php" },
+				code: { type: "string", description: "Source code to run" },
+				setup: { type: "string", description: "Optional shell command to run first, e.g. 'pip install requests'" },
+				args: { type: "string", description: "Optional space-separated CLI args" },
+			},
+			required: ["language", "code"],
+		},
+		annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+		handler: async (args, env) => {
+			const language = String(args.language ?? "").trim();
+			const code = String(args.code ?? "");
+			if (!language) throw new Error("language is required");
+			if (!code.trim()) throw new Error("code is empty");
+			if (code.length > 500_000) throw new Error("code exceeds 500 KB limit");
+			const repo = ghRepo(env);
+			const runKey = newRunKey();
+			await ghFetch(env, `/repos/${repo}/actions/workflows/mcp-exec.yml/dispatches`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					ref: "main",
+					inputs: {
+						run_key: runKey,
+						language,
+						code_b64: base64EncodeUtf8(code),
+						setup: String(args.setup ?? ""),
+						args: String(args.args ?? ""),
+					},
+				}),
+			});
+			return {
+				run_key: runKey,
+				status: "dispatched",
+				note: "GitHub takes a few seconds to schedule the run. Call gh_get_run_result with this run_key, retrying every 3-5s, until status is 'completed'.",
+			};
+		},
+	},
+	{
+		name: "gh_get_run_result",
+		description:
+			"Poll for the status/result of a gh_run_code run by its run_key. Returns status 'not_found_yet' " +
+			"(retry shortly), 'queued'/'in_progress', or 'completed' with the conclusion and full job log.",
+		inputSchema: {
+			type: "object",
+			properties: { run_key: { type: "string", description: "The run_key returned by gh_run_code" } },
+			required: ["run_key"],
+		},
+		annotations: { readOnlyHint: true, openWorldHint: true },
+		handler: async (args, env) => {
+			const runKey = String(args.run_key ?? "").trim();
+			if (!runKey) throw new Error("run_key is required");
+			const run = await ghFindRunByKey(env, runKey);
+			if (!run) return { status: "not_found_yet" };
+			if (run.status !== "completed") {
+				return { status: run.status, run_id: run.id, html_url: run.html_url };
+			}
+			const log = await ghGetRunLog(env, run.id);
+			return { status: "completed", conclusion: run.conclusion, run_id: run.id, html_url: run.html_url, log };
+		},
+	},
 ];
 
 const toolsByName = new Map(tools.map((t) => [t.name, t]));
@@ -838,7 +1136,7 @@ const toolsByName = new Map(tools.map((t) => [t.name, t]));
 // MCP method handlers
 // ---------------------------------------------------------------------------
 
-const SERVER_INFO = { name: "cf-control-mcp", version: "1.3.0" };
+const SERVER_INFO = { name: "cf-control-mcp", version: "1.5.0" };
 const PROTOCOL_VERSION = "2025-06-18";
 
 async function handleRpc(req: JsonRpcRequest, env: Env): Promise<JsonRpcSuccess | JsonRpcError> {
