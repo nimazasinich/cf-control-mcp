@@ -6,9 +6,9 @@
 
 ### Private infrastructure control plane for MCP clients
 
-**Cloudflare Workers · OAuth + PKCE · Cloudflare · Hugging Face · ProxyHarvest · Web · Sandboxed Execution**
+**Cloudflare Workers · OAuth + PKCE · Cloudflare · Hugging Face · ProxyHarvest · Internet Intelligence · Sandboxed Execution**
 
-[![Version](https://img.shields.io/badge/version-1.5.0-B8860B?style=for-the-badge)](./package.json)
+[![Version](https://img.shields.io/badge/version-1.6.0-B8860B?style=for-the-badge)](./package.json)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?style=for-the-badge&logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 [![MCP](https://img.shields.io/badge/MCP-2025--06--18-111827?style=for-the-badge)](https://modelcontextprotocol.io/)
 [![OAuth](https://img.shields.io/badge/OAuth-PKCE%20S256-7C3AED?style=for-the-badge&logo=auth0&logoColor=white)](#authentication--oauth)
@@ -56,7 +56,7 @@ Cloudflare Worker ───────────────► Cloudflare AP
 |---|---|---|
 | ☁️ **Cloudflare** | Zones, DNS, cache, Workers, routes, KV, token verification, direct API passthrough | `cf_list_zones`, `cf_list_dns_records`, `cf_purge_cache`, `cf_list_workers`, `cf_deploy_worker_module`, `cf_api_request` |
 | 🤗 **Hugging Face** | Identity, model search, repo metadata, file commits/deletes, generic Hub API access | `hf_whoami`, `hf_search_models`, `hf_repo_info`, `hf_commit_file`, `hf_api_request` |
-| 🌐 **Web** | Public HTTP fetches plus keyless DuckDuckGo HTML search | `web_fetch`, `web_search` |
+| 🌐 **Internet Intelligence** | Unified/multi-provider search, news & image search, hardened fetch, browser rendering, markdown/extract/links, bounded crawl, evidence-based deep research | `web_search`, `web_search_multi`, `web_news_search`, `web_image_search`, `web_fetch`, `web_render`, `web_markdown`, `web_extract`, `web_links`, `web_snapshot`, `web_crawl`, `web_deep_research` |
 | ⚙️ **Execution** | Fast Piston snippets and full ephemeral GitHub Actions Ubuntu runners | `run_code`, `list_code_runtimes`, `gh_run_code`, `gh_get_run_result` |
 | 🛰️ **ProxyHarvest** | Gateway health, source reachability, TCP/TLS transport reachability | `proxyharvest_gateway_health`, `proxyharvest_source_check`, `proxyharvest_transport_probe` |
 | 🔐 **Auth** | OAuth discovery, DCR, PKCE S256, owner approval, access/refresh tokens, legacy bearer | `/.well-known/*`, `/register`, `/authorize`, `/token`, `/mcp` |
@@ -184,6 +184,11 @@ wrangler secret put GITHUB_PAT
 
 # Optional; defaults to nimazasinich/cf-control-mcp
 wrangler secret put GITHUB_REPO
+
+# Internet Intelligence search providers (all optional)
+wrangler secret put BRAVE_SEARCH_API_KEY
+wrangler secret put TAVILY_API_KEY
+wrangler secret put EXA_API_KEY
 ```
 
 ### 4. Deploy
@@ -288,13 +293,97 @@ If `HUGGINGFACE_TOKEN` is not configured, `hf_*` tools return an explicit config
 
 ---
 
-## ✦ Web & execution tools
+## ✦ Internet Intelligence (v1.6.0)
 
-### Public web
+Version 1.6.0 turns the Worker into a **private internet-capable MCP server**. Twelve tools cover search, reading, rendering, link discovery, bounded crawling, and evidence-based research — all behind the same owner-approved auth, with the same server-side secret model.
 
-`web_fetch` provides outbound public HTTP/HTTPS access with custom method, headers, request body, and response-size control.
+### Search providers
 
-It blocks obvious localhost/private/link-local/metadata destinations and caps returned body size. `web_search` performs keyless DuckDuckGo HTML search and is intentionally treated as a best-effort search surface because markup/rate limits are outside this project’s control.
+Search is provider-agnostic. Results from every provider are normalized to a single shape (`{title, url, snippet, provider, published_at?, score?}`) before they reach the client.
+
+| Provider | Secret | Strengths | Configured when |
+|---|---|---|---|
+| **Brave** | `BRAVE_SEARCH_API_KEY` | General web, news, images | secret present |
+| **Tavily** | `TAVILY_API_KEY` | Recent/news/research queries | secret present |
+| **Exa** | `EXA_API_KEY` | Semantic/neural retrieval | secret present |
+| **DuckDuckGo** | *(none)* | Keyless best-effort fallback | always |
+
+All three paid keys are **optional**. The server starts and runs with zero, one, two, or all three present. `web_search` with `provider="auto"` picks the best configured provider and falls back to the next only on genuine failure; with **no** paid keys it still answers via the keyless DuckDuckGo fallback. A provider-specific request (e.g. `provider="brave"`) returns a `CONFIGURATION_ERROR` when that provider's secret is absent — it never silently degrades.
+
+```bash
+# All optional — enable the providers you want
+wrangler secret put BRAVE_SEARCH_API_KEY
+wrangler secret put TAVILY_API_KEY
+wrangler secret put EXA_API_KEY
+```
+
+### Tools
+
+| Tool | Purpose | Type |
+|---|---|---|
+| `web_search` | Unified search; `provider=auto\|brave\|tavily\|exa\|ddg` with auto-fallback | Read |
+| `web_search_multi` | Query several providers concurrently, merge + dedupe, per-provider errors isolated | Read |
+| `web_news_search` | Recency-oriented search (Tavily → Brave → Exa → DDG) | Read |
+| `web_image_search` | Image metadata search (Brave); no image bytes downloaded | Read |
+| `web_fetch` | Hardened public fetch: GET/HEAD/POST/PUT/PATCH/DELETE, bounded body, redirect re-validation | Read/Write* |
+| `web_render` | Cloudflare Browser Rendering of JS-heavy public pages | Read |
+| `web_markdown` | Clean Markdown of a page (Browser Rendering, with fetch fallback) | Read |
+| `web_extract` | CSS-selector content extraction (scrape endpoint, with fetch fallback) | Read |
+| `web_links` | Absolute-resolved, deduped outbound/internal links | Read |
+| `web_snapshot` | One-page inspection: final URL, status, title, markdown, text, optional links | Read |
+| `web_crawl` | Strictly bounded multi-page crawl (default 10 / max 50 pages, max depth 5); robots.txt-aware by default | Read |
+| `web_deep_research` | Query expansion → multi-provider search → fetch → **evidence aggregation** | Read |
+
+<sub>*`web_fetch` is deliberately **not** annotated `readOnlyHint` because it can issue `POST/PUT/PATCH/DELETE`. Every other web tool is `readOnlyHint: true`. All web tools are `openWorldHint: true`.</sub>
+
+### SSRF hardening
+
+Every URL-taking tool validates its target before and **after** each redirect hop, so a public-looking URL cannot 30x-redirect into a private target. The guard rejects:
+
+- `localhost`, loopback (`127.0.0.0/8`), and the unspecified address (`0.0.0.0`)
+- RFC1918 private ranges (`10/8`, `172.16/12`, `192.168/16`), carrier-grade NAT (`100.64/10`)
+- link-local (`169.254/16`) and cloud **metadata** endpoints (e.g. `169.254.169.254`, `metadata.google.internal`)
+- obfuscated IPv4 (decimal / octal / hex / short) forms of the above
+- IPv6 loopback (`::1`), unique-local (`fc00::/7`), link-local (`fe80::/10`), and IPv4-mapped equivalents
+- `*.internal`, `*.local`, and other internal hostname patterns
+
+The robots.txt fetch used by the crawler goes through this **same** hardened path — it is never a bypass.
+
+### HTML processing layer
+
+`web_markdown`, `web_extract`, `web_links`, `web_snapshot`, `web_crawl`, and `web_deep_research` share a single, dependency-free HTML layer (`src/internet/html.ts`) built on the Workers-native `HTMLRewriter`. There is no second, ad-hoc parser. It streams the markup rather than building a DOM, so it stays light and predictable:
+
+- `htmlToText` — page title + readable text, with `<script>`/`<style>`/`<noscript>` removed
+- `htmlToMarkdown` — headings, paragraphs, list items, blockquotes, and preformatted blocks, with a nesting-aware block stack so inner blocks don't clobber outer ones
+- `extractLinks` — `href`/`src` resolved to absolute URLs, normalized and deduped, with an optional same-origin filter
+- `extractBySelectors` — per-selector text extraction that returns exactly what the DOM contained (no model-generated fields)
+
+Output size limits are measured in **actual UTF-8 bytes** (via `TextEncoder`), not JavaScript character count, and truncation never splits a multi-byte character.
+
+### Robots layer
+
+`web_crawl` and `web_deep_research` are polite by **default**. Before fetching a page they consult the origin's `/robots.txt` through the robots layer (`src/internet/robots.ts`):
+
+- a conservative subset parser — `User-agent`, `Allow`, `Disallow`, `Crawl-delay` — with longest-prefix rule matching and simple `*` wildcard support (this is **not** a full RFC 9309 implementation)
+- one fetch per origin, cached in memory (10-minute TTL); it does not re-fetch `/robots.txt` for every page
+- crawler identity is `cf-control-mcp/1.6` — it does **not** impersonate Chrome, Googlebot, or Bingbot, and robots matching uses that same identity
+- pages disallowed by robots are reported with `skippedReason: "ROBOTS_DENIED"` and `status: null` — a policy decision, **not** a network failure
+- a site-declared `Crawl-delay` is honored but clamped to `MAX_ROBOTS_CRAWL_DELAY_SECONDS` (10 s); an origin asking for more is dropped with `ROBOTS_CRAWL_DELAY_EXCEEDED` so execution stays bounded
+- failure policy: a `2xx` robots.txt is parsed and applied; a `404`/non-`2xx` is treated as "allow all"; a timeout or error never crashes the crawl. The result reports whether a policy was actually fetched (`robotsFetched`) — it never pretends to have evaluated one it couldn't retrieve
+
+Set `respect_robots: false` on `web_crawl`/`web_deep_research` to disable this gating. `web_fetch` and `web_render` are single-target tools and do **not** consult robots.txt.
+
+### Limits & error model
+
+Results are capped (search ≤ 50), fetch bodies bounded (default 200 KB, max 1 MB), renders time-boxed (default 30 s, max 60 s), crawls bounded (≤ 10 default / ≤ 50 hard pages), and research bounded by source count, total bytes, and duration. Failures map to a structured code — `CONFIGURATION_ERROR`, `PROVIDER_ERROR`, `RATE_LIMITED`, `TIMEOUT`, `BLOCKED_TARGET`, `INVALID_ARGUMENT`, `NETWORK_ERROR`, `RENDER_ERROR` — and provider API keys are **never** included in error text.
+
+`web_deep_research` deliberately returns **structured evidence** (ranked sources plus extracted supporting passages), not an invented narrative or conclusion; synthesis is left to the calling model.
+
+`web_render`, `web_markdown`, and `web_extract` use Cloudflare Browser Rendering via the **existing** `CLOUDFLARE_API_TOKEN` — no new secret. If that token lacks the Browser Rendering permission, those tools return a clear `RENDER_ERROR` and (where possible) fall back to a plain fetch.
+
+---
+
+## ✦ Execution tools
 
 ### Fast sandbox: Piston
 
@@ -380,7 +469,20 @@ The smoke test does not print the owner secret or issued OAuth tokens.
 .
 ├── src/
 │   ├── index.ts              # MCP server + tool handlers
-│   └── oauth-worker.ts       # OAuth discovery, PKCE, tokens, MCP wrapper
+│   ├── oauth-worker.ts       # OAuth discovery, PKCE, tokens, MCP wrapper
+│   └── internet/             # v1.6 Internet Intelligence layer
+│       ├── types.ts          # normalized result + structured error model
+│       ├── util.ts           # limits, URL normalize/dedupe, bounded fetch
+│       ├── ssrf.ts           # SSRF guard + redirect-revalidating safeFetch
+│       ├── fetch.ts          # hardened fetch / fetchText + bounded stream reader
+│       ├── html.ts           # shared HTMLRewriter text/markdown/links/extract
+│       ├── robots.ts         # robots.txt policy layer (crawl politeness)
+│       ├── browser.ts        # Cloudflare Browser Rendering client
+│       ├── crawl.ts          # bounded, robots-aware crawl + snapshot
+│       ├── research.ts       # evidence-based deep research pipeline
+│       ├── search-router.ts  # provider selection, fallback, multi-search
+│       ├── providers/        # brave / tavily / exa / ddg adapters
+│       └── tools.ts          # the 12 web_* MCP tool definitions
 ├── scripts/
 │   └── oauth_smoke.py        # live end-to-end OAuth/MCP verification
 ├── plugins/cf-control/
@@ -413,7 +515,7 @@ The smoke test does not print the owner secret or issued OAuth tokens.
 
 ## ✦ Roadmap direction
 
-The current `1.5.0` architecture already behaves as a multi-provider infrastructure MCP gateway. Natural next upgrades include:
+The current `1.6.0` architecture behaves as a multi-provider infrastructure **and internet-intelligence** MCP gateway. Natural next upgrades include:
 
 - fine-grained OAuth scopes per capability family
 - schema-first argument validation
@@ -423,6 +525,7 @@ The current `1.5.0` architecture already behaves as a multi-provider infrastruct
 - safer generic passthrough policies
 - richer MCP resources/prompts alongside tools
 - explicit capability discovery and health reporting
+- DNS-pinned SSRF protection once the Workers runtime exposes resolved IPs
 
 ---
 
