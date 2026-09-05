@@ -26,7 +26,7 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Run Internet Intelligence tests (SSRF, providers, robots, HTML, crawl, tools)
-        run: npm test
+        run: npm run test:internet
 
       - name: Validate Python verification and bridge scripts
         run: python3 -m py_compile scripts/oauth_smoke.py scripts/apex_cf_bridge.py

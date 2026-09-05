@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "build:test": "tsc -p tsconfig.test.json",
     "test": "npm run build:test && node --test \"build-test/test/*.test.js\"",
+    "test:internet": "npm run build:test && node --test \"build-test/test/*.test.js\"",
     "secrets": "echo 'Run: wrangler secret put MCP_AUTH_TOKEN && wrangler secret put CLOUDFLARE_API_TOKEN'"
   },
   "devDependencies": {
