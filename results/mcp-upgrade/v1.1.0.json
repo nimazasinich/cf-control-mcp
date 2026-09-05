@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "version": "1.1.0",
+  "executed_at": "2026-09-05T06:09:59.589787Z",
+  "added_tools": [
+    "cf_verify_api_token",
+    "cf_get_workers_subdomain",
+    "cf_list_worker_routes",
+    "cf_deploy_worker_module",
+    "cf_delete_worker"
+  ],
+  "upgraded_tools": [
+    "cf_list_workers"
+  ],
+  "notes": [
+    "direct Worker deployment uses Cloudflare multipart upload API",
+    "destructive Worker deploy/delete require confirm_destructive=true",
+    "OAuth and legacy owner-token transports remain compatible"
+  ]
+}

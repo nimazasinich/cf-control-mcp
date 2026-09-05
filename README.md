@@ -65,20 +65,22 @@ https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp
 
 When ChatGPT Web has Custom MCP / Developer Mode available for the account, it should discover OAuth from the MCP 401 challenge and `.well-known` metadata, dynamically register itself, open the `/authorize` approval page, and complete PKCE after owner approval.
 
-For OAuth-connected clients, the server intentionally exposes **read-only tools only**. This matches the current ChatGPT Pro custom-MCP read/fetch capability and prevents write actions from leaking into the Pro connection.
+For OAuth-connected clients, explicit owner approval grants the same private Cloudflare control surface as the legacy owner-token path. The consent page clearly warns that write/destructive tools are available; use a narrowly scoped Cloudflare API token.
 
 ### OAuth-visible tools
 
+OAuth clients receive the full owner-approved tool catalog. v1.1.0 adds focused Worker operations on top of the existing DNS, cache, KV, and generic API tools:
+
 | Tool | Purpose |
 |---|---|
-| `cf_list_zones` | List zones/domains |
-| `cf_list_dns_records` | List DNS records |
-| `cf_list_workers` | List Workers |
-| `cf_get_worker_metadata` | Inspect Worker metadata |
-| `cf_kv_list_namespaces` | List KV namespaces |
-| `cf_kv_get_value` | Read a KV key |
+| `cf_verify_api_token` | Verify the configured Cloudflare API token |
+| `cf_get_workers_subdomain` | Resolve the account workers.dev subdomain |
+| `cf_list_worker_routes` | List Worker routes for a zone |
+| `cf_deploy_worker_module` | Upload/deploy a single-module ES Worker with explicit destructive confirmation |
+| `cf_delete_worker` | Delete a Worker with explicit destructive confirmation |
+| `cf_api_request` | Generic Cloudflare API v4 passthrough for endpoints not covered by focused tools |
 
-Write tools are filtered from OAuth `tools/list` and are blocked server-side if called with an OAuth access token.
+`cf_deploy_worker_module` sends source directly to Cloudflare and does not persist it in the MCP Worker. The tool enforces conservative script/module-name validation, a 1.5 MB source limit, and `confirm_destructive=true`.
 
 ## Legacy owner-token access
 
@@ -105,6 +107,10 @@ curl -X POST https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp \
 | `cf_kv_list_namespaces` | List Workers KV namespaces | no |
 | `cf_kv_get_value` | Read a KV key | no |
 | `cf_kv_put_value` | Write a KV key | yes |
+
+## v1.1.0 focused Worker-control upgrade
+
+The MCP server now exposes dedicated token verification, workers.dev discovery, Worker route listing, direct single-module Worker deployment, and Worker deletion tools. `cf_list_workers` also returns richer deployment metadata. The generic `cf_api_request` remains available for advanced Cloudflare API operations.
 
 ## Verification
 

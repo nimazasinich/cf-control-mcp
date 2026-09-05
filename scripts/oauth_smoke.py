@@ -29,12 +29,17 @@ READ_ONLY_TOOLS = {
     "cf_get_worker_metadata",
     "cf_kv_list_namespaces",
     "cf_kv_get_value",
+    "cf_verify_api_token",
+    "cf_get_workers_subdomain",
+    "cf_list_worker_routes",
 }
 WRITE_TOOLS = {
     "cf_create_dns_record",
     "cf_delete_dns_record",
     "cf_purge_cache",
     "cf_kv_put_value",
+    "cf_deploy_worker_module",
+    "cf_delete_worker",
 }
 
 
@@ -338,7 +343,7 @@ def main() -> int:
     if "oauth-protected-resource" not in challenge_header:
         fail("401 response does not advertise OAuth protected-resource metadata")
 
-    print("PASS: OAuth discovery, DCR, consent, PKCE, token exchange, refresh, read-only MCP scope, legacy path, and 401 challenge")
+    print("PASS: OAuth discovery, DCR, consent, PKCE, token exchange, refresh, upgraded MCP tools, legacy path, and 401 challenge")
     return 0
 
 

@@ -104,6 +104,42 @@ async function cfFetch(env: Env, path: string, init: RequestInit = {}): Promise<
 	return body;
 }
 
+async function cfUploadWorkerModule(
+	env: Env,
+	scriptName: string,
+	source: string,
+	moduleName: string,
+	compatibilityDate: string,
+	compatibilityFlags: string[],
+): Promise<any> {
+	const form = new FormData();
+	const metadata: Record<string, unknown> = {
+		main_module: moduleName,
+		compatibility_date: compatibilityDate,
+	};
+	if (compatibilityFlags.length > 0) metadata.compatibility_flags = compatibilityFlags;
+	form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }), "metadata.json");
+	form.append(moduleName, new Blob([source], { type: "application/javascript+module" }), moduleName);
+
+	const apiPath = `/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${scriptName}`;
+	const res = await fetch(`https://api.cloudflare.com/client/v4${apiPath}`, {
+		method: "PUT",
+		headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` },
+		body: form,
+	});
+	const contentType = res.headers.get("content-type") ?? "";
+	const body = contentType.includes("application/json") ? await res.json() : await res.text();
+	if (!res.ok || (typeof body === "object" && body !== null && (body as any).success === false)) {
+		const errors = typeof body === "object" && body !== null ? (body as any).errors : undefined;
+		throw new Error(
+			`Cloudflare API error (${res.status}) uploading ${scriptName}: ${
+				errors ? JSON.stringify(errors) : typeof body === "string" ? body : JSON.stringify(body)
+			}`,
+		);
+	}
+	return body;
+}
+
 const tools: ToolDef[] = [
 	{
 		name: "cf_api_request",
@@ -139,6 +175,97 @@ const tools: ToolDef[] = [
 				init.body = JSON.stringify(args.body);
 			}
 			return await cfFetch(env, path, init);
+		},
+	},
+
+	{
+		name: "cf_verify_api_token",
+		description: "Verify that the configured Cloudflare API token is valid and return its verification status.",
+		inputSchema: { type: "object", properties: {} },
+		annotations: { readOnlyHint: true, openWorldHint: true },
+		handler: async (_args, env) => {
+			const data = await cfFetch(env, "/user/tokens/verify");
+			return data.result;
+		},
+	},
+	{
+		name: "cf_get_workers_subdomain",
+		description: "Get the account workers.dev subdomain used for public Worker URLs.",
+		inputSchema: { type: "object", properties: {} },
+		annotations: { readOnlyHint: true, openWorldHint: true },
+		handler: async (_args, env) => {
+			const data = await cfFetch(env, `/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/workers/subdomain`);
+			return data.result;
+		},
+	},
+	{
+		name: "cf_list_worker_routes",
+		description: "List Cloudflare Worker routes for a zone. Use cf_list_zones first to resolve zone_id.",
+		inputSchema: {
+			type: "object",
+			properties: { zone_id: { type: "string", description: "Cloudflare zone ID" } },
+			required: ["zone_id"],
+		},
+		annotations: { readOnlyHint: true, openWorldHint: true },
+		handler: async (args, env) => {
+			const data = await cfFetch(env, `/zones/${args.zone_id}/workers/routes`);
+			return data.result;
+		},
+	},
+	{
+		name: "cf_deploy_worker_module",
+		description:
+			"Upload and immediately deploy a single-module ES module Cloudflare Worker. This is a destructive write operation. " +
+			"Source is sent directly to Cloudflare and is not persisted by this MCP server.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				script_name: { type: "string", description: "Worker script name, e.g. proxyharvest-gateway" },
+				source: { type: "string", description: "Complete ES-module Worker source code" },
+				module_name: { type: "string", description: "Multipart module filename. Default: worker.mjs" },
+				compatibility_date: { type: "string", description: "YYYY-MM-DD. Defaults to today's UTC date." },
+				compatibility_flags: { type: "array", items: { type: "string" }, description: "Optional Workers compatibility flags" },
+				confirm_destructive: { type: "boolean", description: "Must be true to permit deployment" },
+			},
+			required: ["script_name", "source", "confirm_destructive"],
+		},
+		annotations: { destructiveHint: true, idempotentHint: false, openWorldHint: true },
+		handler: async (args, env) => {
+			if (args.confirm_destructive !== true) throw new Error("confirm_destructive=true is required");
+			const scriptName = String(args.script_name ?? "").trim();
+			const moduleName = String(args.module_name ?? "worker.mjs").trim();
+			const source = String(args.source ?? "");
+			const compatibilityDate = String(args.compatibility_date ?? new Date().toISOString().slice(0, 10));
+			const compatibilityFlags = Array.isArray(args.compatibility_flags)
+				? args.compatibility_flags.map((flag) => String(flag)).filter(Boolean).slice(0, 32)
+				: [];
+			if (!/^[A-Za-z0-9_-]{1,64}$/.test(scriptName)) throw new Error("invalid script_name");
+			if (!/^[A-Za-z0-9._-]{1,128}$/.test(moduleName)) throw new Error("invalid module_name");
+			if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(compatibilityDate)) throw new Error("invalid compatibility_date");
+			if (!source.trim()) throw new Error("source is empty");
+			if (source.length > 1_500_000) throw new Error("source exceeds 1.5 MB MCP safety limit");
+			const data = await cfUploadWorkerModule(env, scriptName, source, moduleName, compatibilityDate, compatibilityFlags);
+			return { deployed: true, script_name: scriptName, compatibility_date: compatibilityDate, result: data.result ?? data };
+		},
+	},
+	{
+		name: "cf_delete_worker",
+		description: "Delete a Cloudflare Worker script by name. Requires explicit confirm_destructive=true.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				script_name: { type: "string", description: "Worker script name" },
+				confirm_destructive: { type: "boolean", description: "Must be true to permit deletion" },
+			},
+			required: ["script_name", "confirm_destructive"],
+		},
+		annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: true },
+		handler: async (args, env) => {
+			if (args.confirm_destructive !== true) throw new Error("confirm_destructive=true is required");
+			const scriptName = String(args.script_name ?? "").trim();
+			if (!/^[A-Za-z0-9_-]{1,64}$/.test(scriptName)) throw new Error("invalid script_name");
+			const data = await cfFetch(env, `/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${scriptName}`, { method: "DELETE" });
+			return { deleted: true, script_name: scriptName, result: data.result ?? data };
 		},
 	},
 	{
@@ -269,7 +396,16 @@ const tools: ToolDef[] = [
 		annotations: { readOnlyHint: true, openWorldHint: true },
 		handler: async (_args, env) => {
 			const data = await cfFetch(env, `/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/workers/scripts`);
-			return data.result.map((w: any) => ({ id: w.id, modified_on: w.modified_on, created_on: w.created_on }));
+			return data.result.map((w: any) => ({
+				id: w.id,
+				modified_on: w.modified_on,
+				created_on: w.created_on,
+				compatibility_date: w.compatibility_date,
+				deployment_id: w.deployment_id,
+				etag: w.etag,
+				last_deployed_from: w.last_deployed_from,
+				handlers: w.handlers,
+			}));
 		},
 	},
 	{
@@ -355,7 +491,7 @@ const toolsByName = new Map(tools.map((t) => [t.name, t]));
 // MCP method handlers
 // ---------------------------------------------------------------------------
 
-const SERVER_INFO = { name: "cf-control-mcp", version: "1.0.0" };
+const SERVER_INFO = { name: "cf-control-mcp", version: "1.1.0" };
 const PROTOCOL_VERSION = "2025-06-18";
 
 async function handleRpc(req: JsonRpcRequest, env: Env): Promise<JsonRpcSuccess | JsonRpcError> {
@@ -438,6 +574,7 @@ export default {
 		if (url.pathname === "/" && request.method === "GET") {
 			return json({
 				name: SERVER_INFO.name,
+				version: SERVER_INFO.version,
 				description: "Remote MCP server for controlling a Cloudflare account. POST MCP JSON-RPC requests to /mcp.",
 				mcp_endpoint: `${url.origin}/mcp`,
 			});
