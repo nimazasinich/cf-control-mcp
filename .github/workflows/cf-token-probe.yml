@@ -52,6 +52,15 @@ jobs:
               w_code=$(curl -s -o /tmp/workers.json -w "%{http_code}" -H "Authorization: Bearer $token" "https://api.cloudflare.com/client/v4/accounts/$acct/workers/scripts")
               w_ok=$(python3 -c "import json;d=json.load(open('/tmp/workers.json'));print(d.get('success'))" 2>/dev/null || echo "parse_error")
               echo "  workers list:     http=$w_code success=$w_ok"
+
+              d_code=$(curl -s -o /tmp/d1.json -w "%{http_code}" -H "Authorization: Bearer $token" "https://api.cloudflare.com/client/v4/accounts/$acct/d1/database")
+              d_ok=$(python3 -c "import json;d=json.load(open('/tmp/d1.json'));print(d.get('success'))" 2>/dev/null || echo "parse_error")
+              d_errs=$(python3 -c "import json;d=json.load(open('/tmp/d1.json'));print([e.get('code') for e in d.get('errors',[])])" 2>/dev/null || echo "[]")
+              echo "  d1 list:          http=$d_code success=$d_ok errors=$d_errs"
+              if [ "$d_ok" = "True" ]; then
+                dbnames=$(python3 -c "import json;d=json.load(open('/tmp/d1.json'));print([x.get('name') for x in d.get('result',[])])" 2>/dev/null)
+                echo "  existing d1 dbs:  $dbnames"
+              fi
               echo ""
             } | tee -a "$RESULTS_FILE"
           }
