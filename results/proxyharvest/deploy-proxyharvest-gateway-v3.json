@@ -1,0 +1,58 @@
+{
+  "request_id": "deploy-proxyharvest-gateway-v3",
+  "project": "ProxyHarvest",
+  "operation": "deploy_worker",
+  "ok": true,
+  "executed_at": "2026-09-05T06:07:35.665752Z",
+  "script_name": "proxyharvest-gateway",
+  "source_path": "deploy/proxyharvest/worker.mjs",
+  "compatibility_date": "2026-09-05",
+  "cloudflare": {
+    "http_status": 200,
+    "api_path": "/accounts/324f9984b34bf5d39a778c9753c49632/workers/scripts/proxyharvest-gateway",
+    "response": {
+      "result": {
+        "created_on": "2026-09-04T06:02:31.202401Z",
+        "modified_on": "2026-09-05T06:07:34.961146Z",
+        "id": "proxyharvest-gateway",
+        "tag": "d0f42853f1d442699d894e2d911a142a",
+        "entry_point": "worker.mjs",
+        "tags": [],
+        "deployment_id": "34ab96e6b7d64767b49cb8e52685fd4c",
+        "tail_consumers": null,
+        "logpush": false,
+        "has_assets": false,
+        "has_modules": true,
+        "etag": "56e2da96c4b302d91cf0eaf4f4d2fc9c185c744002be5533bbfe89c2aff02711",
+        "handlers": [
+          "fetch"
+        ],
+        "last_deployed_from": "api",
+        "compatibility_date": "2026-09-05",
+        "usage_model": "standard",
+        "startup_time_ms": 4
+      },
+      "success": true,
+      "errors": [],
+      "messages": []
+    },
+    "cf_ray": "a3630df24bce05a7-IAD"
+  },
+  "health": {
+    "url": "https://proxyharvest-gateway.amin-chinisaz-edu.workers.dev/health",
+    "ok": true,
+    "status": 200,
+    "body": {
+      "ok": true,
+      "service": "ProxyHarvest Worker Gateway v38",
+      "routes": [
+        "/health",
+        "/fetch-sub",
+        "/probe"
+      ],
+      "probe": "raw-tcp-tls",
+      "note": "transport reachability only; never protocol/tunnel verification"
+    }
+  },
+  "reason": "Deploy the current ProxyHarvest v38 Cloudflare gateway from latest main, replacing the old v3.0.0 allowlist/HEAD probe implementation, then verify public /health."
+}
