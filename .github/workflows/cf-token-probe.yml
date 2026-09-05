@@ -4,63 +4,56 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Probe each candidate Cloudflare token (read-only checks)
         run: |
           set +e
+          RESULTS_FILE="$GITHUB_WORKSPACE/probe-results.txt"
+          : > "$RESULTS_FILE"
+
           probe_token() {
             local label="$1"
             local token="$2"
             local acct="$PROBE_ACCOUNT_ID"
 
             echo "::add-mask::$token"
+            {
+              echo "=== $label ==="
 
-            echo "=== $label ==="
+              v_code=$(curl -s -o /tmp/verify.json -w "%{http_code}" -H "Authorization: Bearer $token" "https://api.cloudflare.com/client/v4/user/tokens/verify")
+              v_status=$(python3 -c "import json;d=json.load(open('/tmp/verify.json'));print(d.get('result',{}).get('status','?'))" 2>/dev/null || echo "parse_error")
+              echo "  token verify:     http=$v_code status=$v_status"
 
-            # 1. Token identity/status (does not require any specific scope)
-            v_code=$(curl -s -o /tmp/verify.json -w "%{http_code}" \
-              -H "Authorization: Bearer $token" \
-              "https://api.cloudflare.com/client/v4/user/tokens/verify")
-            v_status=$(python3 -c "import json;d=json.load(open('/tmp/verify.json'));print(d.get('result',{}).get('status','?'))" 2>/dev/null || echo "parse_error")
-            echo "  token verify: http=$v_code status=$v_status"
+              g_code=$(curl -s -o /tmp/gateways.json -w "%{http_code}" -H "Authorization: Bearer $token" "https://api.cloudflare.com/client/v4/accounts/$acct/ai-gateway/gateways")
+              g_ok=$(python3 -c "import json;d=json.load(open('/tmp/gateways.json'));print(d.get('success'))" 2>/dev/null || echo "parse_error")
+              g_errs=$(python3 -c "import json;d=json.load(open('/tmp/gateways.json'));print([e.get('code') for e in d.get('errors',[])])" 2>/dev/null || echo "[]")
+              echo "  ai-gateway list:  http=$g_code success=$g_ok errors=$g_errs"
+              if [ "$g_ok" = "True" ]; then
+                names=$(python3 -c "import json;d=json.load(open('/tmp/gateways.json'));print([g.get('id') for g in d.get('result',[])])" 2>/dev/null)
+                echo "  existing gateways: $names"
+              fi
 
-            # 2. AI Gateway Read: list gateways
-            g_code=$(curl -s -o /tmp/gateways.json -w "%{http_code}" \
-              -H "Authorization: Bearer $token" \
-              "https://api.cloudflare.com/client/v4/accounts/$acct/ai-gateway/gateways")
-            g_ok=$(python3 -c "import json;d=json.load(open('/tmp/gateways.json'));print(d.get('success'))" 2>/dev/null || echo "parse_error")
-            g_errs=$(python3 -c "import json;d=json.load(open('/tmp/gateways.json'));print([e.get('code') for e in d.get('errors',[])])" 2>/dev/null || echo "[]")
-            echo "  ai-gateway list:  http=$g_code success=$g_ok errors=$g_errs"
-            if [ "$g_ok" = "True" ]; then
-              names=$(python3 -c "import json;d=json.load(open('/tmp/gateways.json'));print([g.get('id') for g in d.get('result',[])])" 2>/dev/null)
-              echo "  existing gateways: $names"
-            fi
+              s_code=$(curl -s -o /tmp/stores.json -w "%{http_code}" -H "Authorization: Bearer $token" "https://api.cloudflare.com/client/v4/accounts/$acct/secrets_store/stores")
+              s_ok=$(python3 -c "import json;d=json.load(open('/tmp/stores.json'));print(d.get('success'))" 2>/dev/null || echo "parse_error")
+              s_errs=$(python3 -c "import json;d=json.load(open('/tmp/stores.json'));print([e.get('code') for e in d.get('errors',[])])" 2>/dev/null || echo "[]")
+              echo "  secrets_store list: http=$s_code success=$s_ok errors=$s_errs"
+              if [ "$s_ok" = "True" ]; then
+                storenames=$(python3 -c "import json;d=json.load(open('/tmp/stores.json'));print([s.get('id') for s in d.get('result',[])])" 2>/dev/null)
+                echo "  existing stores: $storenames"
+              fi
 
-            # 3. Secrets Store Read: list stores
-            s_code=$(curl -s -o /tmp/stores.json -w "%{http_code}" \
-              -H "Authorization: Bearer $token" \
-              "https://api.cloudflare.com/client/v4/accounts/$acct/secrets_store/stores")
-            s_ok=$(python3 -c "import json;d=json.load(open('/tmp/stores.json'));print(d.get('success'))" 2>/dev/null || echo "parse_error")
-            s_errs=$(python3 -c "import json;d=json.load(open('/tmp/stores.json'));print([e.get('code') for e in d.get('errors',[])])" 2>/dev/null || echo "[]")
-            echo "  secrets_store list: http=$s_code success=$s_ok errors=$s_errs"
-            if [ "$s_ok" = "True" ]; then
-              storenames=$(python3 -c "import json;d=json.load(open('/tmp/stores.json'));print([s.get('id') for s in d.get('result',[])])" 2>/dev/null)
-              echo "  existing stores: $storenames"
-            fi
-
-            # 4. Workers list (sanity: confirms account-level Workers scope, already known-good from prior deploys)
-            w_code=$(curl -s -o /tmp/workers.json -w "%{http_code}" \
-              -H "Authorization: Bearer $token" \
-              "https://api.cloudflare.com/client/v4/accounts/$acct/workers/scripts")
-            w_ok=$(python3 -c "import json;d=json.load(open('/tmp/workers.json'));print(d.get('success'))" 2>/dev/null || echo "parse_error")
-            echo "  workers list:     http=$w_code success=$w_ok"
-
-            echo ""
+              w_code=$(curl -s -o /tmp/workers.json -w "%{http_code}" -H "Authorization: Bearer $token" "https://api.cloudflare.com/client/v4/accounts/$acct/workers/scripts")
+              w_ok=$(python3 -c "import json;d=json.load(open('/tmp/workers.json'));print(d.get('success'))" 2>/dev/null || echo "parse_error")
+              echo "  workers list:     http=$w_code success=$w_ok"
+              echo ""
+            } | tee -a "$RESULTS_FILE"
           }
 
           probe_token "TOKEN_A (CF_API_TOKEN/CF_maxAPI_TOKEN/CF_TOKEN1/CF_TOKEN3)" "$PROBE_TOKEN_A"
@@ -75,3 +68,15 @@ jobs:
           PROBE_TOKEN_D: ${{ secrets.PROBE_TOKEN_D }}
           PROBE_TOKEN_E: ${{ secrets.PROBE_TOKEN_E }}
           PROBE_ACCOUNT_ID: ${{ secrets.PROBE_ACCOUNT_ID }}
+
+      - name: Publish results to a dedicated branch (no secrets, codes/booleans only)
+        run: |
+          cp "$GITHUB_WORKSPACE/probe-results.txt" /tmp/probe-results.txt
+          git config user.email "agent@cf-control-mcp.local"
+          git config user.name "cf-control-mcp-agent"
+          git checkout --orphan cf-probe-results-latest
+          git rm -rf . > /dev/null 2>&1 || true
+          cp /tmp/probe-results.txt "$GITHUB_WORKSPACE/probe-results.txt"
+          git add probe-results.txt
+          git commit -m "cf token probe results ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+          git push -f origin cf-probe-results-latest
