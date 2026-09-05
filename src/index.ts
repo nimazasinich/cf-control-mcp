@@ -199,6 +199,67 @@ function base64EncodeUtf8(text: string): string {
 	return btoa(binary);
 }
 
+// ---------------------------------------------------------------------------
+// Sandbox code execution (Piston, emkc.org) — free, no API key required.
+// ---------------------------------------------------------------------------
+
+/** Executes a snippet via the public Piston API. Ephemeral, stateless, no secrets involved. */
+async function pistonExecute(
+	language: string,
+	version: string,
+	code: string,
+	stdin: string,
+	args: string[],
+): Promise<any> {
+	const res = await fetch("https://emkc.org/api/v2/piston/execute", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			language,
+			version: version || "*",
+			files: [{ content: code }],
+			stdin: stdin || "",
+			args: args || [],
+		}),
+	});
+	const contentType = res.headers.get("content-type") ?? "";
+	const body = contentType.includes("application/json") ? await res.json() : await res.text();
+	if (!res.ok) {
+		throw new Error(`Piston API error (${res.status}): ${typeof body === "string" ? body : JSON.stringify(body)}`);
+	}
+	return body;
+}
+
+async function pistonRuntimes(): Promise<any> {
+	const res = await fetch("https://emkc.org/api/v2/piston/runtimes");
+	if (!res.ok) throw new Error(`Piston API error (${res.status}) listing runtimes`);
+	return await res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Generic outbound internet access, with an SSRF guard so the client cannot
+// use this Worker to reach its own cloud-internal network.
+// ---------------------------------------------------------------------------
+
+const BLOCKED_HOSTNAME_PATTERNS: RegExp[] = [
+	/^localhost$/i,
+	/^127\./,
+	/^0\.0\.0\.0$/,
+	/^10\./,
+	/^169\.254\./, // link-local, incl. cloud metadata services (AWS/GCP/Azure/Cloudflare)
+	/^192\.168\./,
+	/^172\.(1[6-9]|2\d|3[01])\./,
+	/^\[?::1\]?$/,
+	/^\[?fc00:/i,
+	/^\[?fe80:/i,
+	/\.internal$/i,
+	/metadata\.google\.internal$/i,
+];
+
+function isBlockedHost(hostname: string): boolean {
+	return BLOCKED_HOSTNAME_PATTERNS.some((re) => re.test(hostname));
+}
+
 const tools: ToolDef[] = [
 	{
 		name: "proxyharvest_gateway_health",
@@ -830,6 +891,105 @@ const tools: ToolDef[] = [
 			return await hfFetch(env, path, init);
 		},
 	},
+
+	{
+		name: "run_code",
+		description:
+			"Execute a short code snippet for free in an ephemeral public sandbox (Piston, emkc.org) and return " +
+			"stdout, stderr, and exit code. Supports common languages (python, javascript/node, typescript, bash, " +
+			"go, rust, java, c, cpp, etc — call list_code_runtimes for the exact catalog). No account or credentials " +
+			"involved, no persistent state, and nothing here touches the Cloudflare/HF accounts. Not suitable for " +
+			"secrets or private data: the sandbox is a shared free third-party service.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				language: { type: "string", description: "Piston language id, e.g. 'python', 'javascript', 'bash', 'go'" },
+				version: { type: "string", description: "Language version, or '*' for latest. Default '*'." },
+				code: { type: "string", description: "Source code to run" },
+				stdin: { type: "string", description: "Optional stdin to feed the program" },
+				args: { type: "array", items: { type: "string" }, description: "Optional CLI args passed to the program" },
+			},
+			required: ["language", "code"],
+		},
+		annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+		handler: async (args) => {
+			const language = String(args.language ?? "").trim();
+			const code = String(args.code ?? "");
+			if (!language) throw new Error("language is required");
+			if (!code.trim()) throw new Error("code is empty");
+			if (code.length > 200_000) throw new Error("code exceeds 200 KB sandbox limit");
+			const version = String(args.version ?? "*");
+			const stdin = String(args.stdin ?? "");
+			const cliArgs = Array.isArray(args.args) ? args.args.map((a) => String(a)).slice(0, 32) : [];
+			return await pistonExecute(language, version, code, stdin, cliArgs);
+		},
+	},
+	{
+		name: "list_code_runtimes",
+		description: "List the languages/versions currently available in the free Piston sandbox used by run_code.",
+		inputSchema: { type: "object", properties: {} },
+		annotations: { readOnlyHint: true, openWorldHint: true },
+		handler: async () => await pistonRuntimes(),
+	},
+	{
+		name: "web_fetch",
+		description:
+			"Fetch any public URL from the open internet through this Worker's outbound network and return status, " +
+			"headers, and a (possibly truncated) body. Use this when the client otherwise has no way to reach the " +
+			"internet. Refuses requests to localhost, private/link-local IP ranges, and cloud metadata endpoints to " +
+			"protect this Worker's own environment — it cannot be used to pivot into internal infrastructure.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				url: { type: "string", description: "Absolute http(s) URL" },
+				method: { type: "string", description: "HTTP method. Default GET." },
+				headers: { type: "object", description: "Optional request headers as key/value pairs" },
+				body: { type: "string", description: "Optional raw request body (string). Ignored for GET/HEAD." },
+				max_bytes: { type: "number", description: "Max response bytes to return (default 200000, max 1000000)" },
+			},
+			required: ["url"],
+		},
+		annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+		handler: async (args) => {
+			const urlStr = String(args.url ?? "").trim();
+			if (!urlStr) throw new Error("url is required");
+			let parsed: URL;
+			try {
+				parsed = new URL(urlStr);
+			} catch {
+				throw new Error("invalid url");
+			}
+			if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+				throw new Error("only http/https URLs are allowed");
+			}
+			if (isBlockedHost(parsed.hostname)) {
+				throw new Error("this host is blocked (private/internal/metadata network range)");
+			}
+			const method = String(args.method ?? "GET").toUpperCase();
+			const init: RequestInit = { method };
+			if (args.headers && typeof args.headers === "object") {
+				init.headers = Object.fromEntries(
+					Object.entries(args.headers as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
+				);
+			}
+			if (args.body !== undefined && method !== "GET" && method !== "HEAD") {
+				init.body = String(args.body);
+			}
+			const res = await fetch(parsed.toString(), init);
+			const maxBytes = Math.min(Number(args.max_bytes ?? 200_000) || 200_000, 1_000_000);
+			const buf = await res.arrayBuffer();
+			const truncated = buf.byteLength > maxBytes;
+			const bodyBytes = truncated ? buf.slice(0, maxBytes) : buf;
+			const bodyText = new TextDecoder("utf-8", { fatal: false, ignoreBOM: false }).decode(bodyBytes);
+			return {
+				status: res.status,
+				ok: res.ok,
+				headers: Object.fromEntries(res.headers.entries()),
+				truncated,
+				body: bodyText,
+			};
+		},
+	},
 ];
 
 const toolsByName = new Map(tools.map((t) => [t.name, t]));
@@ -838,7 +998,7 @@ const toolsByName = new Map(tools.map((t) => [t.name, t]));
 // MCP method handlers
 // ---------------------------------------------------------------------------
 
-const SERVER_INFO = { name: "cf-control-mcp", version: "1.3.0" };
+const SERVER_INFO = { name: "cf-control-mcp", version: "1.4.0" };
 const PROTOCOL_VERSION = "2025-06-18";
 
 async function handleRpc(req: JsonRpcRequest, env: Env): Promise<JsonRpcSuccess | JsonRpcError> {
