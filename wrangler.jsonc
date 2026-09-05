@@ -14,5 +14,12 @@
     // Leave empty to fall back to direct Google AI Studio calls.
     // Create the gateway in: Cloudflare Dashboard → AI → AI Gateway → New Gateway
     "CF_AIG_GATEWAY_SLUG": "cf-control-mcp"
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "DM_DB",
+      "database_name": "DM_DB",
+      "database_id": "138a2aef-9f5a-4635-8346-dc474fdfff93"
+    }
+  ]
 }

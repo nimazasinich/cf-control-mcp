@@ -25,6 +25,8 @@ export interface Env {
 	MCP_AUTH_TOKEN: string;
 	CLOUDFLARE_API_TOKEN: string;
 	CLOUDFLARE_ACCOUNT_ID: string;
+	/** v1.8 Admin Console — D1 metadata store (providers/models/routing/audit). Never holds raw credentials. */
+	DM_DB: D1Database;
 	/** Optional. Set with `wrangler secret put HUGGINGFACE_TOKEN` to enable the hf_* tools. */
 	HUGGINGFACE_TOKEN?: string;
 	/** Optional. Set with `wrangler secret put GITHUB_PAT` to enable the gh_* real-sandbox tools. */
