@@ -92,8 +92,8 @@ jobs:
           CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
           HF_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
-          GH_PAT: ${{ secrets.GITHUB_PAT }}
-          GH_REPO: ${{ secrets.GITHUB_REPO }}
+          GH_PAT: ${{ secrets.GH_RUNNER_PAT }}
+          GH_REPO: ${{ secrets.GH_RUNNER_REPO }}
           BRAVE_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
           TAVILY_KEY: ${{ secrets.TAVILY_API_KEY }}
           EXA_KEY: ${{ secrets.EXA_API_KEY }}
