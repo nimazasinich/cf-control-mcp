@@ -66,7 +66,7 @@ export function gatewayUnauthorized(): Response {
 export function gatewayUnconfigured(): Response {
 	const body: import("./types").GatewayErrorBody = {
 		error: {
-			message: "Provider gateway is not configured. Set GATEWAY_AUTH_TOKEN and GOOGLE_AI_STUDIO_KEY Worker secrets.",
+			message: "Provider gateway is not configured. Set the GATEWAY_AUTH_TOKEN Worker secret to enable client access to /v1/*.",
 			type: "server_error",
 			code: "gateway_not_configured",
 		},
