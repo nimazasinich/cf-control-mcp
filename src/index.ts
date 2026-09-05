@@ -23,6 +23,8 @@ export interface Env {
 	MCP_AUTH_TOKEN: string;
 	CLOUDFLARE_API_TOKEN: string;
 	CLOUDFLARE_ACCOUNT_ID: string;
+	/** Optional. Set with `wrangler secret put HUGGINGFACE_TOKEN` to enable the hf_* tools. */
+	HUGGINGFACE_TOKEN?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +158,45 @@ async function proxyHarvestJson(base: string, path: string, init: RequestInit = 
 	if (!res.ok) throw new Error(`ProxyHarvest gateway HTTP ${res.status} on ${path}`);
 	if (!body || typeof body !== "object") throw new Error(`ProxyHarvest gateway returned non-JSON on ${path}`);
 	return body;
+}
+
+/** Minimal fetch wrapper for the Hugging Face Hub API, with actionable errors. */
+async function hfFetch(env: Env, path: string, init: RequestInit = {}): Promise<any> {
+	if (!env.HUGGINGFACE_TOKEN) throw new Error("HUGGINGFACE_TOKEN is not configured as a Worker secret");
+	const res = await fetch(`https://huggingface.co${path}`, {
+		...init,
+		headers: {
+			Authorization: `Bearer ${env.HUGGINGFACE_TOKEN}`,
+			...(init.headers ?? {}),
+		},
+	});
+	const contentType = res.headers.get("content-type") ?? "";
+	const body = contentType.includes("application/json") ? await res.json() : await res.text();
+	if (!res.ok) {
+		throw new Error(
+			`Hugging Face API error (${res.status}) on ${path}: ${typeof body === "string" ? body : JSON.stringify(body)}`,
+		);
+	}
+	return body;
+}
+
+function normalizeRepoType(value: unknown): "model" | "dataset" | "space" {
+	const t = String(value ?? "model").trim().toLowerCase();
+	if (t === "model" || t === "dataset" || t === "space") return t;
+	throw new Error("repo_type must be one of: model, dataset, space");
+}
+
+function encodeRepoId(value: unknown): string {
+	const id = String(value ?? "").trim();
+	if (!id) throw new Error("repo_id is required");
+	return id.split("/").map(encodeURIComponent).join("/");
+}
+
+function base64EncodeUtf8(text: string): string {
+	const bytes = new TextEncoder().encode(text);
+	let binary = "";
+	for (const byte of bytes) binary += String.fromCharCode(byte);
+	return btoa(binary);
 }
 
 const tools: ToolDef[] = [
@@ -554,6 +595,241 @@ const tools: ToolDef[] = [
 			return { ok: true };
 		},
 	},
+	{
+		name: "hf_whoami",
+		description: "Verify the configured Hugging Face token and return account info (username, orgs, plan).",
+		inputSchema: { type: "object", properties: {} },
+		annotations: { readOnlyHint: true, openWorldHint: true },
+		handler: async (_args, env) => hfFetch(env, "/api/whoami-v2"),
+	},
+	{
+		name: "hf_search_models",
+		description:
+			"Search Hugging Face models. Omit 'author' to search publicly; set author to your own username " +
+			"(from hf_whoami) to list your own models. Also works for finding models to use elsewhere.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				search: { type: "string", description: "Free-text search term" },
+				author: { type: "string", description: "Filter by author/organization username" },
+				limit: { type: "number", description: "Max results (default 20, max 100)" },
+			},
+		},
+		annotations: { readOnlyHint: true, openWorldHint: true },
+		handler: async (args, env) => {
+			const params = new URLSearchParams();
+			if (args.search) params.set("search", String(args.search));
+			if (args.author) params.set("author", String(args.author));
+			params.set("limit", String(Math.max(1, Math.min(100, Number(args.limit ?? 20) || 20))));
+			return hfFetch(env, `/api/models?${params.toString()}`);
+		},
+	},
+	{
+		name: "hf_repo_info",
+		description: "Get metadata for a Hugging Face repo (model, dataset, or space): visibility, tags, downloads, files.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				repo_id: { type: "string", description: "Repo id, e.g. 'username/model-name'" },
+				repo_type: { type: "string", description: "model | dataset | space. Default model." },
+			},
+			required: ["repo_id"],
+		},
+		annotations: { readOnlyHint: true, openWorldHint: true },
+		handler: async (args, env) => hfFetch(env, `/api/${normalizeRepoType(args.repo_type)}s/${encodeRepoId(args.repo_id)}`),
+	},
+	{
+		name: "hf_list_repo_files",
+		description: "List files (tree) in a Hugging Face repo at a given revision.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				repo_id: { type: "string" },
+				repo_type: { type: "string", description: "model | dataset | space. Default model." },
+				revision: { type: "string", description: "Branch/tag/commit. Default main." },
+			},
+			required: ["repo_id"],
+		},
+		annotations: { readOnlyHint: true, openWorldHint: true },
+		handler: async (args, env) => {
+			const revision = String(args.revision ?? "main");
+			return hfFetch(env, `/api/${normalizeRepoType(args.repo_type)}s/${encodeRepoId(args.repo_id)}/tree/${encodeURIComponent(revision)}`);
+		},
+	},
+	{
+		name: "hf_create_repo",
+		description: "Create a new Hugging Face repo (model, dataset, or space). Requires confirm_destructive=true.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				name: { type: "string", description: "Repo name, e.g. 'my-model' (without namespace)" },
+				repo_type: { type: "string", description: "model | dataset | space. Default model." },
+				organization: { type: "string", description: "Optional org namespace to create under" },
+				private: { type: "boolean", description: "Whether the repo is private. Default true." },
+				space_sdk: { type: "string", description: "Required if repo_type=space: gradio | streamlit | docker | static" },
+				confirm_destructive: { type: "boolean", description: "Must be true to permit creation" },
+			},
+			required: ["name", "confirm_destructive"],
+		},
+		annotations: { destructiveHint: true, idempotentHint: false, openWorldHint: true },
+		handler: async (args, env) => {
+			if (args.confirm_destructive !== true) throw new Error("confirm_destructive=true is required");
+			const repoType = normalizeRepoType(args.repo_type);
+			const body: Record<string, unknown> = {
+				type: repoType,
+				name: String(args.name ?? "").trim(),
+				private: args.private ?? true,
+			};
+			if (args.organization) body.organization = String(args.organization);
+			if (repoType === "space") {
+				const sdk = String(args.space_sdk ?? "").trim();
+				if (!["gradio", "streamlit", "docker", "static"].includes(sdk)) {
+					throw new Error("space_sdk must be one of gradio, streamlit, docker, static");
+				}
+				body.sdk = sdk;
+			}
+			return hfFetch(env, "/api/repos/create", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			});
+		},
+	},
+	{
+		name: "hf_delete_repo",
+		description: "Permanently delete a Hugging Face repo. Requires confirm_destructive=true.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				name: { type: "string", description: "Repo name (without namespace)" },
+				repo_type: { type: "string", description: "model | dataset | space. Default model." },
+				organization: { type: "string", description: "Optional org namespace" },
+				confirm_destructive: { type: "boolean", description: "Must be true to permit deletion" },
+			},
+			required: ["name", "confirm_destructive"],
+		},
+		annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: true },
+		handler: async (args, env) => {
+			if (args.confirm_destructive !== true) throw new Error("confirm_destructive=true is required");
+			const body: Record<string, unknown> = { type: normalizeRepoType(args.repo_type), name: String(args.name ?? "").trim() };
+			if (args.organization) body.organization = String(args.organization);
+			return hfFetch(env, "/api/repos/delete", {
+				method: "DELETE",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			});
+		},
+	},
+	{
+		name: "hf_commit_file",
+		description:
+			"Create or update a single file in a Hugging Face repo via the Commit API (no Git LFS - text or base64 " +
+			"content only, under the safety size limit). Requires confirm_destructive=true.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				repo_id: { type: "string" },
+				repo_type: { type: "string", description: "model | dataset | space. Default model." },
+				path: { type: "string", description: "File path inside the repo, e.g. 'README.md'" },
+				content: { type: "string", description: "File content. UTF-8 text by default, or base64 if content_is_base64=true." },
+				content_is_base64: { type: "boolean", description: "Set true if 'content' is already base64-encoded (for binary files)." },
+				revision: { type: "string", description: "Branch to commit to. Default main." },
+				commit_message: { type: "string" },
+				confirm_destructive: { type: "boolean", description: "Must be true to permit the write" },
+			},
+			required: ["repo_id", "path", "content", "confirm_destructive"],
+		},
+		annotations: { destructiveHint: true, idempotentHint: false, openWorldHint: true },
+		handler: async (args, env) => {
+			if (args.confirm_destructive !== true) throw new Error("confirm_destructive=true is required");
+			const repoType = normalizeRepoType(args.repo_type);
+			const revision = String(args.revision ?? "main");
+			const path = String(args.path ?? "").trim().replace(/^\/+/, "");
+			if (!path) throw new Error("path is required");
+			const raw = String(args.content ?? "");
+			const base64Content = args.content_is_base64 === true ? raw : base64EncodeUtf8(raw);
+			if (base64Content.length > 7_000_000) throw new Error("content exceeds the ~5MB MCP safety limit for non-LFS commits");
+			const ndjson = [
+				JSON.stringify({ key: "header", value: { summary: String(args.commit_message ?? `Update ${path} via cf-control-mcp`) } }),
+				JSON.stringify({ key: "file", value: { path, content: base64Content, encoding: "base64" } }),
+			].join("\n");
+			const result = await hfFetch(env, `/api/${repoType}s/${encodeRepoId(args.repo_id)}/commit/${encodeURIComponent(revision)}`, {
+				method: "POST",
+				headers: { "Content-Type": "application/x-ndjson" },
+				body: ndjson,
+			});
+			return { committed: true, repo_id: args.repo_id, path, revision, result };
+		},
+	},
+	{
+		name: "hf_delete_file",
+		description: "Delete a file from a Hugging Face repo via the Commit API. Requires confirm_destructive=true.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				repo_id: { type: "string" },
+				repo_type: { type: "string", description: "model | dataset | space. Default model." },
+				path: { type: "string" },
+				revision: { type: "string", description: "Branch to commit to. Default main." },
+				commit_message: { type: "string" },
+				confirm_destructive: { type: "boolean", description: "Must be true to permit the delete" },
+			},
+			required: ["repo_id", "path", "confirm_destructive"],
+		},
+		annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: true },
+		handler: async (args, env) => {
+			if (args.confirm_destructive !== true) throw new Error("confirm_destructive=true is required");
+			const repoType = normalizeRepoType(args.repo_type);
+			const revision = String(args.revision ?? "main");
+			const path = String(args.path ?? "").trim().replace(/^\/+/, "");
+			if (!path) throw new Error("path is required");
+			const ndjson = [
+				JSON.stringify({ key: "header", value: { summary: String(args.commit_message ?? `Delete ${path} via cf-control-mcp`) } }),
+				JSON.stringify({ key: "deletedFile", value: { path } }),
+			].join("\n");
+			const result = await hfFetch(env, `/api/${repoType}s/${encodeRepoId(args.repo_id)}/commit/${encodeURIComponent(revision)}`, {
+				method: "POST",
+				headers: { "Content-Type": "application/x-ndjson" },
+				body: ndjson,
+			});
+			return { deleted: true, repo_id: args.repo_id, path, revision, result };
+		},
+	},
+	{
+		name: "hf_api_request",
+		description:
+			"Call any Hugging Face Hub API endpoint directly, with any HTTP method. Use this for anything not covered " +
+			"by the other hf_* tools. Path is relative to https://huggingface.co, e.g. '/api/models/username/model-name'. " +
+			"This has full read/write power tied to HUGGINGFACE_TOKEN.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				method: { type: "string", description: "HTTP method: GET, POST, PUT, PATCH, DELETE" },
+				path: { type: "string", description: "API path starting with '/', e.g. '/api/models'" },
+				body: { type: "object", description: "JSON body for POST/PUT/PATCH. Omit for GET/DELETE." },
+				query: { type: "object", description: "Optional query string params as key/value pairs." },
+			},
+			required: ["method", "path"],
+		},
+		annotations: { destructiveHint: true, openWorldHint: true },
+		handler: async (args, env) => {
+			let path = String(args.path);
+			if (!path.startsWith("/")) path = "/" + path;
+			if (args.query && typeof args.query === "object") {
+				const qs = new URLSearchParams();
+				for (const [k, v] of Object.entries(args.query as Record<string, unknown>)) qs.set(k, String(v));
+				const sep = path.includes("?") ? "&" : "?";
+				path = `${path}${sep}${qs.toString()}`;
+			}
+			const method = String(args.method || "GET").toUpperCase();
+			const init: RequestInit = { method };
+			if (args.body !== undefined && method !== "GET" && method !== "DELETE") {
+				init.headers = { "Content-Type": "application/json" };
+				init.body = JSON.stringify(args.body);
+			}
+			return await hfFetch(env, path, init);
+		},
+	},
 ];
 
 const toolsByName = new Map(tools.map((t) => [t.name, t]));
@@ -562,7 +838,7 @@ const toolsByName = new Map(tools.map((t) => [t.name, t]));
 // MCP method handlers
 // ---------------------------------------------------------------------------
 
-const SERVER_INFO = { name: "cf-control-mcp", version: "1.2.0" };
+const SERVER_INFO = { name: "cf-control-mcp", version: "1.3.0" };
 const PROTOCOL_VERSION = "2025-06-18";
 
 async function handleRpc(req: JsonRpcRequest, env: Env): Promise<JsonRpcSuccess | JsonRpcError> {

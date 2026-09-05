@@ -35,6 +35,10 @@ READ_ONLY_TOOLS = {
     "proxyharvest_gateway_health",
     "proxyharvest_source_check",
     "proxyharvest_transport_probe",
+    "hf_whoami",
+    "hf_search_models",
+    "hf_repo_info",
+    "hf_list_repo_files",
 }
 WRITE_TOOLS = {
     "cf_create_dns_record",
@@ -43,6 +47,11 @@ WRITE_TOOLS = {
     "cf_kv_put_value",
     "cf_deploy_worker_module",
     "cf_delete_worker",
+    "hf_create_repo",
+    "hf_delete_repo",
+    "hf_commit_file",
+    "hf_delete_file",
+    "hf_api_request",
 }
 
 
@@ -333,6 +342,21 @@ def main() -> int:
     legacy_tools = {tool["name"] for tool in legacy["result"]["tools"]}
     if not WRITE_TOOLS.issubset(legacy_tools):
         fail("legacy owner-token path no longer exposes the existing write tools")
+
+    if os.environ.get("HF_LIVE_CHECK") == "1":
+        hf_check, _ = request_json(
+            "/mcp",
+            method="POST",
+            headers={"Authorization": "Bearer " + OWNER_TOKEN},
+            body={
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "hf_whoami", "arguments": {}},
+            },
+        )
+        if hf_check.get("result", {}).get("isError"):
+            fail(f"hf_whoami failed against the live Worker: {hf_check}")
 
     unauthenticated = request(
         "/mcp",

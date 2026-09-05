@@ -151,6 +151,28 @@ The direct `.mcp.json` plugin package is useful for MCP-capable desktop environm
 - Workers observability remains enabled in `wrangler.jsonc`.
 
 
+## v1.3.0 Hugging Face control tools
+
+Set an additional secret to enable the `hf_*` tools:
+
+```bash
+wrangler secret put HUGGINGFACE_TOKEN
+```
+
+| Tool | Purpose | Destructive? |
+|---|---|---|
+| `hf_whoami` | Verify the token and return account info | no |
+| `hf_search_models` | Search models (public, or your own via `author`) | no |
+| `hf_repo_info` | Get metadata for a model/dataset/space | no |
+| `hf_list_repo_files` | List files in a repo at a revision | no |
+| `hf_create_repo` | Create a model/dataset/space repo | yes |
+| `hf_delete_repo` | Delete a repo | yes |
+| `hf_commit_file` | Create/update a file via the Commit API (non-LFS, ~5MB limit) | yes |
+| `hf_delete_file` | Delete a file via the Commit API | yes |
+| `hf_api_request` | Generic Hugging Face Hub API passthrough | yes |
+
+If `HUGGINGFACE_TOKEN` is not set, the `hf_*` tools return a clear configuration error instead of failing silently.
+
 ## v1.2.0 ProxyHarvest control tools
 
 The private MCP exposes three focused read-only ProxyHarvest tools: `proxyharvest_gateway_health`, `proxyharvest_source_check`, and `proxyharvest_transport_probe`. They operate against the live Cloudflare gateway and preserve the architecture boundary: Cloudflare source/transport reachability is never protocol, tunnel, or WireGuard verification. Real `VERIFIED` status remains exclusive to the Local Real Test Bridge using sing-box + curl.
