@@ -1,0 +1,69 @@
+name: Upgrade CF Control MCP Tools
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/upgrade_mcp_tools_v11.py'
+      - '.github/workflows/mcp-tools-upgrade.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cf-control-mcp-tools-upgrade
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply deterministic v1.1.0 upgrade
+        run: python3 scripts/upgrade_mcp_tools_v11.py
+
+      - name: Validate package lock and install
+        run: npm ci
+
+      - name: Typecheck Worker
+        run: npx tsc --noEmit
+
+      - name: Validate Python verification scripts
+        run: python3 -m py_compile scripts/oauth_smoke.py scripts/upgrade_mcp_tools_v11.py
+
+      - name: Validate upgrade markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'version: "1.1.0"' src/index.ts
+          grep -Fq 'cf_deploy_worker_module' src/index.ts
+          grep -Fq 'cf_get_workers_subdomain' src/index.ts
+          grep -Fq 'cf_list_worker_routes' src/index.ts
+          grep -Fq 'cf_verify_api_token' src/index.ts
+          grep -Fq 'confirm_destructive=true is required' src/index.ts
+          git diff --check
+
+      - name: Commit upgraded MCP tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.email "actions@github.com"
+          git config user.name "cf-control-mcp-upgrade-bot"
+          git add src/index.ts package.json package-lock.json README.md scripts/oauth_smoke.py results/mcp-upgrade/v1.1.0.json
+          if git diff --cached --quiet; then
+            echo 'Upgrade already applied; nothing to commit.'
+            exit 0
+          fi
+          git commit -m "feat: upgrade CF Control MCP tools to v1.1.0"
+          git pull --rebase origin main
+          git push origin HEAD:main
