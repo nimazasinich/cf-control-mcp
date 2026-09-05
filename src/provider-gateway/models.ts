@@ -15,18 +15,14 @@ const GEMINI_MODELS: ModelListResponse["data"] = [
 	{ id: "fast", object: "model", created: 1745000000, owned_by: "system" },
 	{ id: "coding", object: "model", created: 1739000000, owned_by: "system" },
 	{ id: "research", object: "model", created: 1745000000, owned_by: "system" },
-	// Gemini 2.0 family
-	{ id: "gemini-2.0-flash", object: "model", created: 1739000000, owned_by: "google" },
-	{ id: "gemini-2.0-flash-lite", object: "model", created: 1739000000, owned_by: "google" },
-	{ id: "gemini-2.0-flash-thinking-exp", object: "model", created: 1739000000, owned_by: "google" },
-	// Gemini 2.5 family
-	{ id: "gemini-2.5-flash", object: "model", created: 1745000000, owned_by: "google" },
-	{ id: "gemini-2.5-flash-lite", object: "model", created: 1745000000, owned_by: "google" },
-	{ id: "gemini-2.5-pro", object: "model", created: 1745000000, owned_by: "google" },
-	// Gemini 1.5 family (still widely used)
-	{ id: "gemini-1.5-flash", object: "model", created: 1714000000, owned_by: "google" },
-	{ id: "gemini-1.5-flash-8b", object: "model", created: 1714000000, owned_by: "google" },
-	{ id: "gemini-1.5-pro", object: "model", created: 1714000000, owned_by: "google" },
+	// Gemini 3.8 family (Newest Flash)
+	{ id: "gemini-3.8-flash", object: "model", created: 1745000000, owned_by: "google" },
+	// Gemini 3.7 family (Previous Gen Flash)
+	{ id: "gemini-3.7-flash", object: "model", created: 1745000000, owned_by: "google" },
+	// Gemini 3.6 family (Balanced Flash)
+	{ id: "gemini-3.6-flash", object: "model", created: 1739000000, owned_by: "google" },
+	// Gemini 3.5 family (Legacy Baseline)
+	{ id: "gemini-3.5-flash", object: "model", created: 1739000000, owned_by: "google" },
 ];
 
 /**

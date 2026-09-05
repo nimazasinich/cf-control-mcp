@@ -1,15 +1,22 @@
 /**
  * v1.8 Admin Console — credential management.
- *
- * Flow: Admin UI → this authenticated Worker admin API → Cloudflare AI
- * Gateway provider_configs API (which stores the value in Secrets Store
- * server-side). The raw credential is read once from the request body,
- * forwarded to Cloudflare, and never written to D1 or returned to the
- * browser afterwards.
- *
- * Reference: POST /accounts/{account_id}/ai-gateway/gateways/{gateway_id}/provider_configs
  */
 import type { AdminEnv } from "./types";
+
+export interface SetCredentialResult {
+	ok: boolean;
+	configured: boolean;
+	providerConfigLinked: boolean;
+	secretId?: string;
+	error?: string;
+}
+
+export interface DeleteCredentialResult {
+	ok: boolean;
+	providerConfigDeleted: boolean;
+	credentialRevoked: boolean;
+	error?: string;
+}
 
 async function getSecretsStoreId(env: AdminEnv): Promise<string | null> {
 	if (!env.CLOUDFLARE_API_TOKEN || !env.CLOUDFLARE_ACCOUNT_ID) return null;
@@ -24,88 +31,137 @@ async function getSecretsStoreId(env: AdminEnv): Promise<string | null> {
 	return null;
 }
 
+async function pollSecretActive(env: AdminEnv, storeId: string, secretId: string): Promise<boolean> {
+	for (let i = 0; i < 6; i++) {
+		const res = await fetch(
+			`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/secrets_store/stores/${storeId}/secrets/${secretId}`,
+			{ headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` } }
+		);
+		if (res.ok) {
+			const data = await res.json<{ success: boolean; result?: { status?: string } }>();
+			if (data.success) {
+				const status = data.result?.status;
+				if (status === "active" || status === undefined) return true;
+			}
+		}
+		await new Promise((r) => setTimeout(r, 500));
+	}
+	return false;
+}
+
 export async function setProviderCredential(
 	env: AdminEnv,
 	providerSlug: string,
 	alias: string,
 	rawSecretValue: string,
-): Promise<{ ok: true; secretId: string } | { ok: false; error: string }> {
+): Promise<SetCredentialResult> {
 	if (!env.CLOUDFLARE_API_TOKEN || !env.CLOUDFLARE_ACCOUNT_ID || !env.CF_AIG_GATEWAY_SLUG) {
-		return { ok: false, error: "CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, or CF_AIG_GATEWAY_SLUG not configured" };
+		return { ok: false, configured: false, providerConfigLinked: false, error: "CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, or CF_AIG_GATEWAY_SLUG not configured" };
 	}
 
 	const storeId = await getSecretsStoreId(env);
-	const secretName = `${env.CF_AIG_GATEWAY_SLUG}_${providerSlug}_${alias}`;
+	if (!storeId) return { ok: false, configured: false, providerConfigLinked: false, error: "No Secrets Store found" };
 
-	// Step 1: Store secret in Cloudflare Secrets Store (naming: {gateway_id}_{provider_slug}_{alias})
-	let secretId = secretName;
-	if (storeId) {
-		const ssRes = await fetch(
+	const secretName = `${env.CF_AIG_GATEWAY_SLUG}_${providerSlug}_${alias}`;
+	let secretId = "";
+
+	// Step 1: Discover existing secret to decide POST vs PATCH
+	const listRes = await fetch(
+		`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/secrets_store/stores/${storeId}/secrets`,
+		{ headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` } }
+	);
+	const listData = await listRes.json<{ success: boolean; result?: Array<{ id: string; name: string }> }>();
+	const existingSecret = listData.result?.find((s) => s.name === secretName);
+
+	if (existingSecret) {
+		// PATCH existing
+		secretId = existingSecret.id;
+		const patchRes = await fetch(
+			`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/secrets_store/stores/${storeId}/secrets/${secretId}`,
+			{
+				method: "PATCH",
+				headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`, "Content-Type": "application/json" },
+				body: JSON.stringify({ value: rawSecretValue, scopes: ["ai_gateway"], comment: "Rotated via cf-control-mcp" }),
+			}
+		);
+		if (!patchRes.ok) return { ok: false, configured: false, providerConfigLinked: false, error: `Secret PATCH failed: ${patchRes.status}` };
+	} else {
+		// POST new
+		const postRes = await fetch(
 			`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/secrets_store/stores/${storeId}/secrets`,
 			{
 				method: "POST",
-				headers: {
-					Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`,
-					"Content-Type": "application/json",
-				},
-				body: JSON.stringify([{ name: secretName, value: rawSecretValue, scopes: ["workers"] }]),
-			},
+				headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`, "Content-Type": "application/json" },
+				body: JSON.stringify([{ name: secretName, value: rawSecretValue, scopes: ["ai_gateway"] }]),
+			}
 		);
-		const ssData = await ssRes.json<{ success: boolean; result?: Array<{ id: string; name: string }>; errors?: Array<{ message: string }> }>();
-		if (ssData.success && ssData.result?.[0]?.id) {
-			secretId = ssData.result[0].id;
-		} else if (!ssRes.ok && ssData.errors?.[0]?.message !== "secret_already_exists") {
-			// Continue to try provider_configs even if secret creation warning
-		}
+		const postData = await postRes.json<{ success: boolean; result?: Array<{ id: string }> }>();
+		if (!postData.success || !postData.result?.[0]?.id) return { ok: false, configured: false, providerConfigLinked: false, error: "Secret POST failed" };
+		secretId = postData.result[0].id;
 	}
 
-	// Step 2: Register provider config in Cloudflare AI Gateway
-	const url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai-gateway/gateways/${env.CF_AIG_GATEWAY_SLUG}/provider_configs`;
-	const res = await fetch(url, {
+	// Verify activation
+	const isActive = await pollSecretActive(env, storeId, secretId);
+	if (!isActive) {
+		return { ok: false, configured: false, providerConfigLinked: false, error: "Secret activation timed out" };
+	}
+
+	// Step 2: Idempotent Provider Config linkage
+	const pcUrl = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai-gateway/gateways/${env.CF_AIG_GATEWAY_SLUG}/provider_configs`;
+	const getPcRes = await fetch(pcUrl, { headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` } });
+	const getPcData = await getPcRes.json<{ success: boolean; result?: Array<{ id: string; provider_slug: string; alias: string }> }>();
+	const existingConfig = getPcData.result?.find((c) => c.provider_slug === providerSlug && c.alias === alias);
+
+	if (existingConfig) {
+		return { ok: true, configured: true, providerConfigLinked: true, secretId };
+	}
+
+	const postPcRes = await fetch(pcUrl, {
 		method: "POST",
-		headers: {
-			Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`,
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-			provider_slug: providerSlug,
-			alias,
-			default_config: true,
-		}),
+		headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`, "Content-Type": "application/json" },
+		body: JSON.stringify({ provider_slug: providerSlug, alias, default_config: true }),
 	});
+	const postPcData = await postPcRes.json<{ success: boolean; errors?: Array<{ message: string }> }>();
 
-	const body = await res.json<{ success: boolean; result?: { secret_id: string }; errors?: Array<{ message: string }> }>();
-	if (res.ok && body.success) {
-		return { ok: true, secretId: body.result?.secret_id || secretId };
+	if (postPcRes.ok && postPcData.success) {
+		return { ok: true, configured: true, providerConfigLinked: true, secretId };
 	}
 
-	// If Secrets Store creation succeeded, BYOK secret is active in store
-	if (storeId) {
-		return { ok: true, secretId };
-	}
-
-	const msg = body.errors?.map((e) => e.message).join("; ") || `HTTP ${res.status}`;
-	return { ok: false, error: msg };
+	const msg = postPcData.errors?.map((e) => e.message).join("; ") || `HTTP ${postPcRes.status}`;
+	return { ok: false, configured: true, providerConfigLinked: false, error: msg };
 }
 
 export async function deleteProviderCredential(
 	env: AdminEnv,
 	providerSlug: string,
 	alias: string,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<DeleteCredentialResult> {
 	if (!env.CLOUDFLARE_API_TOKEN || !env.CLOUDFLARE_ACCOUNT_ID || !env.CF_AIG_GATEWAY_SLUG) {
-		return { ok: false, error: "CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, or CF_AIG_GATEWAY_SLUG not configured" };
+		return { ok: false, providerConfigDeleted: false, credentialRevoked: false, error: "CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, or CF_AIG_GATEWAY_SLUG not configured" };
 	}
 
-	// Step 1: Delete from AI Gateway provider_configs
-	const url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai-gateway/gateways/${env.CF_AIG_GATEWAY_SLUG}/provider_configs/${providerSlug}?alias=${alias}`;
-	await fetch(url, {
-		method: "DELETE",
-		headers: {
-			Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`,
-			"Content-Type": "application/json",
-		},
-	}).catch(() => {});
+	let providerConfigDeleted = false;
+	
+	// Step 1: Try undocumented DELETE (by finding ID first)
+	const pcUrl = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai-gateway/gateways/${env.CF_AIG_GATEWAY_SLUG}/provider_configs`;
+	const getPcRes = await fetch(pcUrl, { headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` } });
+	const getPcData = await getPcRes.json<{ success: boolean; result?: Array<{ id: string; provider_slug: string; alias: string }> }>();
+	const existingConfig = getPcData.result?.find((c) => c.provider_slug === providerSlug && c.alias === alias);
+
+	if (existingConfig) {
+		const delPcRes = await fetch(`${pcUrl}/${existingConfig.id}`, {
+			method: "DELETE",
+			headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` },
+		}).catch(() => null);
+		if (delPcRes?.ok) {
+			providerConfigDeleted = true;
+		}
+	} else {
+		// If it didn't exist, we consider it deleted.
+		providerConfigDeleted = true;
+	}
+
+	let credentialRevoked = false;
 
 	// Step 2: Delete from Secrets Store
 	const storeId = await getSecretsStoreId(env);
@@ -117,13 +173,17 @@ export async function deleteProviderCredential(
 		const secretName = `${env.CF_AIG_GATEWAY_SLUG}_${providerSlug}_${alias}`;
 		const target = listData.result?.find((s) => s.name === secretName);
 		if (target) {
-			await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/secrets_store/stores/${storeId}/secrets/${target.id}`, {
+			const delSecRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/secrets_store/stores/${storeId}/secrets/${target.id}`, {
 				method: "DELETE",
 				headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` },
-			}).catch(() => {});
+			}).catch(() => null);
+			if (delSecRes?.ok) credentialRevoked = true;
+		} else {
+			credentialRevoked = true;
 		}
 	}
 
-	return { ok: true };
+	const ok = providerConfigDeleted && credentialRevoked;
+	return { ok, providerConfigDeleted, credentialRevoked };
 }
 

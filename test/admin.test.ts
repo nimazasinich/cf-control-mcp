@@ -34,7 +34,7 @@ test('Admin Health: google-ai-studio not configured', async () => {
 });
 
 test('Admin Health: google-ai-studio healthy', async () => {
-  const env = { CLOUDFLARE_ACCOUNT_ID: 'acc', CF_AIG_GATEWAY_SLUG: 'gw' } as AdminEnv;
+  const env = { CLOUDFLARE_ACCOUNT_ID: 'acc', CF_AIG_GATEWAY_SLUG: 'gw', CF_AIG_TOKEN: 'mock' } as AdminEnv;
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     return new Response(JSON.stringify({}), { status: 200 });
   };
@@ -45,7 +45,7 @@ test('Admin Health: google-ai-studio healthy', async () => {
 });
 
 test('Admin Health: google-ai-studio auth error', async () => {
-  const env = { CLOUDFLARE_ACCOUNT_ID: 'acc', CF_AIG_GATEWAY_SLUG: 'gw' } as AdminEnv;
+  const env = { CLOUDFLARE_ACCOUNT_ID: 'acc', CF_AIG_GATEWAY_SLUG: 'gw', CF_AIG_TOKEN: 'mock' } as AdminEnv;
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     return new Response('unauthorized', { status: 401 });
   };
@@ -58,9 +58,9 @@ test('Provider Gateway: resolves default aliases and custom D1 routing rules', a
   const baseEnv = { CLOUDFLARE_ACCOUNT_ID: 'acc' };
 
   // Default aliases
-  assert.equal(await resolveModel('fast', baseEnv), 'gemini-2.5-flash');
-  assert.equal(await resolveModel('coding', baseEnv), 'gemini-2.0-flash');
-  assert.equal(await resolveModel('research', baseEnv), 'gemini-2.5-pro');
+  assert.equal(await resolveModel('fast', baseEnv), 'gemini-3.6-flash');
+  assert.equal(await resolveModel('coding', baseEnv), 'gemini-3.8-flash');
+  assert.equal(await resolveModel('research', baseEnv), 'gemini-3.8-flash');
   assert.equal(await resolveModel('gemini-1.5-pro', baseEnv), 'gemini-1.5-pro');
 
   // Custom alias with mock D1 database
@@ -90,7 +90,7 @@ test('Provider Gateway: handleModels returns 200 with aliases and models list', 
   assert.ok(ids.includes('fast'));
   assert.ok(ids.includes('coding'));
   assert.ok(ids.includes('research'));
-  assert.ok(ids.includes('gemini-2.5-flash'));
+  assert.ok(ids.includes('gemini-3.5-flash'));
 });
 
 test('Admin API: unauthenticated request handling', async () => {
