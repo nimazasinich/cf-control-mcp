@@ -1,5 +1,6 @@
 import legacyWorker, { type Env } from "./index";
 import { handleProviderGateway } from "./provider-gateway/router";
+import { handleAdmin } from "./admin/router";
 
 /**
  * OAuth 2.1 / MCP authorization wrapper around the existing stateless MCP server.
@@ -619,6 +620,10 @@ export default {
     // Provider Gateway — OpenAI-compatible /v1/* endpoints for Google Gemini.
     // Uses a separate GATEWAY_AUTH_TOKEN; MCP_AUTH_TOKEN is never involved.
     if (url.pathname.startsWith("/v1/")) return handleProviderGateway(request, env);
+
+    // v1.8 Admin Console — owner-only, session-cookie auth signed with
+    // MCP_AUTH_TOKEN (never protected by GATEWAY_AUTH_TOKEN alone).
+    if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) return handleAdmin(request, env);
 
     if (url.pathname === "/" && request.method === "GET") {
       return json({
