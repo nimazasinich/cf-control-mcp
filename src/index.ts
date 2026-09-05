@@ -265,6 +265,77 @@ function isBlockedHost(hostname: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Free, keyless web search via DuckDuckGo's HTML-only results page
+// (html.duckduckgo.com/html/). This scrapes server-rendered markup instead
+// of calling an authenticated search API, so it needs no secret beyond the
+// existing MCP_AUTH_TOKEN — but it is inherently less stable than a paid
+// API: DuckDuckGo can rate-limit this Worker's IP or change its markup
+// without notice. Treat an empty result set as "try again", not "nothing
+// found".
+// ---------------------------------------------------------------------------
+
+interface DdgSearchResult {
+	title: string;
+	url: string;
+	snippet: string;
+}
+
+class DdgTitleCollector {
+	results: { title: string; href: string }[] = [];
+	private current: { title: string; href: string } | null = null;
+	element(el: Element) {
+		this.current = { title: "", href: el.getAttribute("href") ?? "" };
+		this.results.push(this.current);
+	}
+	text(chunk: Text) {
+		if (this.current) this.current.title += chunk.text;
+	}
+}
+
+class DdgSnippetCollector {
+	snippets: string[] = [];
+	private current = "";
+	element(_el: Element) {
+		this.current = "";
+	}
+	text(chunk: Text) {
+		this.current += chunk.text;
+		if (chunk.lastInTextNode) this.snippets.push(this.current.trim());
+	}
+}
+
+/** DDG's result links are wrapped in a redirect (`/l/?uddg=<encoded-real-url>&...`); unwrap it. */
+function decodeDdgRedirect(href: string): string {
+	try {
+		const parsed = new URL(href, "https://duckduckgo.com");
+		return parsed.searchParams.get("uddg") || href;
+	} catch {
+		return href;
+	}
+}
+
+async function duckDuckGoSearch(query: string, maxResults: number): Promise<DdgSearchResult[]> {
+	const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+		headers: {
+			"User-Agent":
+				"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+		},
+	});
+	if (!res.ok) throw new Error(`DuckDuckGo search failed (${res.status}). It may be rate-limiting this Worker.`);
+
+	const titles = new DdgTitleCollector();
+	const snippets = new DdgSnippetCollector();
+	const rewritten = new HTMLRewriter().on("a.result__a", titles).on("a.result__snippet", snippets).transform(res);
+	await rewritten.text(); // HTMLRewriter is lazy; force full consumption of the stream.
+
+	return titles.results.slice(0, maxResults).map((t, i) => ({
+		title: t.title.trim(),
+		url: decodeDdgRedirect(t.href),
+		snippet: (snippets.snippets[i] ?? "").trim(),
+	}));
+}
+
+// ---------------------------------------------------------------------------
 // Real sandbox execution via GitHub Actions (.github/workflows/mcp-exec.yml).
 // A full ephemeral Ubuntu VM with real internet access, free on GitHub's
 // Actions minutes, dispatched and polled through the REST API.
@@ -1053,6 +1124,31 @@ const tools: ToolDef[] = [
 				truncated,
 				body: bodyText,
 			};
+		},
+	},
+
+	{
+		name: "web_search",
+		description:
+			"Free, keyless web search using DuckDuckGo's HTML results page — no API key or extra secret needed beyond " +
+			"this Worker's own MCP auth. Returns a ranked list of {title, url, snippet}. Less reliable than a paid " +
+			"search API: results can be empty if DuckDuckGo rate-limits or changes its markup. Use web_fetch afterward " +
+			"to read the full content of any returned url.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				query: { type: "string", description: "Search query" },
+				max_results: { type: "number", description: "Max results to return (default 10, max 25)" },
+			},
+			required: ["query"],
+		},
+		annotations: { readOnlyHint: true, openWorldHint: true },
+		handler: async (args) => {
+			const query = String(args.query ?? "").trim();
+			if (!query) throw new Error("query is required");
+			const maxResults = Math.min(Math.max(Number(args.max_results ?? 10) || 10, 1), 25);
+			const results = await duckDuckGoSearch(query, maxResults);
+			return { query, count: results.length, results };
 		},
 	},
 
