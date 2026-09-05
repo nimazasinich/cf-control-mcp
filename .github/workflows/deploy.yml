@@ -88,3 +88,5 @@ jobs:
       - name: Fail if deploy failed
         if: steps.run.outputs.final_exit != '0'
         run: exit 1
+
+# ProxyHarvest MCP v1.2 live redeploy trigger
