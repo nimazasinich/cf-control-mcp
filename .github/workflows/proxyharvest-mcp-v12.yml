@@ -1,0 +1,72 @@
+name: Upgrade ProxyHarvest MCP Tools v1.2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/upgrade_proxyharvest_tools_v12.py'
+      - '.github/workflows/proxyharvest-mcp-v12.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: proxyharvest-mcp-v12
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply deterministic ProxyHarvest MCP v1.2 upgrade
+        run: python3 scripts/upgrade_proxyharvest_tools_v12.py
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Typecheck Worker
+        run: npx tsc --noEmit
+
+      - name: Validate migration and OAuth smoke syntax
+        run: python3 -m py_compile scripts/upgrade_proxyharvest_tools_v12.py scripts/oauth_smoke.py
+
+      - name: Validate v1.2 architecture boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'PROXYHARVEST_MCP_V12 = "1.2.0"' src/index.ts
+          grep -Fq 'proxyharvest_gateway_health' src/index.ts
+          grep -Fq 'proxyharvest_source_check' src/index.ts
+          grep -Fq 'proxyharvest_transport_probe' src/index.ts
+          grep -Fq 'verification: false' src/index.ts
+          grep -Fq 'local-real-test-bridge-only' src/index.ts
+          grep -Fq 'version: "1.2.0"' src/index.ts
+          grep -Fq '"version": "1.2.0"' package.json
+          git diff --check
+          echo 'PASS: ProxyHarvest MCP v1.2 source/type/boundary checks.'
+
+      - name: Commit v1.2 generated changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.email "actions@github.com"
+          git config user.name "proxyharvest-mcp-upgrade-bot"
+          git add src/index.ts package.json package-lock.json README.md scripts/oauth_smoke.py results/mcp-upgrade/v1.2.0.json
+          if git diff --cached --quiet; then
+            echo 'v1.2 already applied; nothing to commit.'
+            exit 0
+          fi
+          git commit -m "feat: upgrade CF Control MCP with ProxyHarvest v1.2 tools"
+          git pull --rebase origin main
+          git push origin HEAD:main
