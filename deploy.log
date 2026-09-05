@@ -10,13 +10,13 @@
   After installation, run Wrangler with `npx wrangler`.
 
 
-Total Upload: 92.94 KiB / gzip: 21.47 KiB
-Worker Startup Time: 20 ms
+Total Upload: 95.72 KiB / gzip: 22.34 KiB
+Worker Startup Time: 13 ms
 No bindings found.
-Uploaded cf-control-mcp (1.36 sec)
-Deployed cf-control-mcp triggers (0.11 sec)
+Uploaded cf-control-mcp (1.45 sec)
+Deployed cf-control-mcp triggers (0.18 sec)
   https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-Current Version ID: a46da127-72c2-4687-98d6-1e86793c4701
+Current Version ID: a70254ce-8d68-4881-a528-24a9fa1c847c
 
 Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
 deploy exit code: 0
