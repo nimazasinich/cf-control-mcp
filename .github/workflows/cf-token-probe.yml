@@ -70,13 +70,23 @@ jobs:
           probe_token "TOKEN_C (CF_TOKEN_WORKERS/CF_TOKEN4)" "$PROBE_TOKEN_C"
           probe_token "TOKEN_D (CF_TOKEN5)" "$PROBE_TOKEN_D"
           probe_token "TOKEN_E (CF_TOKEN2)" "$PROBE_TOKEN_E"
+
+          if [ -n "$PROBE_TOKEN_F" ]; then
+            PROBE_ACCOUNT_ID="${PROBE_ACCOUNT_ID2:-$PROBE_ACCOUNT_ID}" probe_token "TOKEN_F (new candidate, updated CLOUDFLARE_API_TOKEN)" "$PROBE_TOKEN_F"
+          fi
+          if [ -n "$PROBE_TOKEN_G" ]; then
+            PROBE_ACCOUNT_ID="${PROBE_ACCOUNT_ID2:-$PROBE_ACCOUNT_ID}" probe_token "TOKEN_G (new candidate #2)" "$PROBE_TOKEN_G"
+          fi
         env:
           PROBE_TOKEN_A: ${{ secrets.PROBE_TOKEN_A }}
           PROBE_TOKEN_B: ${{ secrets.PROBE_TOKEN_B }}
           PROBE_TOKEN_C: ${{ secrets.PROBE_TOKEN_C }}
           PROBE_TOKEN_D: ${{ secrets.PROBE_TOKEN_D }}
           PROBE_TOKEN_E: ${{ secrets.PROBE_TOKEN_E }}
+          PROBE_TOKEN_F: ${{ secrets.PROBE_TOKEN_F }}
+          PROBE_TOKEN_G: ${{ secrets.PROBE_TOKEN_G }}
           PROBE_ACCOUNT_ID: ${{ secrets.PROBE_ACCOUNT_ID }}
+          PROBE_ACCOUNT_ID2: ${{ secrets.PROBE_ACCOUNT_ID2 }}
 
       - name: Publish results to a dedicated branch (no secrets, codes/booleans only)
         run: |
