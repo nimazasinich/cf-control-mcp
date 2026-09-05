@@ -49,19 +49,34 @@ export interface Env {
 	 */
 	GATEWAY_AUTH_TOKEN?: string;
 	/**
-	 * Google AI Studio API key.
-	 * Stored as a Worker secret, NEVER returned to clients.
-	 * Set via: wrangler secret put GOOGLE_AI_STUDIO_KEY
-	 */
-	GOOGLE_AI_STUDIO_KEY?: string;
-	/**
 	 * Cloudflare AI Gateway gateway slug.
-	 * When set, /v1/chat/completions is routed via the AI Gateway compat
-	 * endpoint for observability, caching, and rate-limiting.
-	 * When absent, requests go directly to Google AI Studio.
+	 * Primary/intended mode: /v1/chat/completions is routed via the AI
+	 * Gateway compat endpoint, which resolves the Google AI Studio credential
+	 * itself via BYOK (Secrets Store) — the Worker never holds that key.
 	 * Set as a plain var (not a secret) in wrangler.jsonc.
 	 */
 	CF_AIG_GATEWAY_SLUG?: string;
+	/**
+	 * Optional AI Gateway auth token (sent as cf-aig-authorization). Only
+	 * needed if the gateway is configured as an "authenticated gateway" in
+	 * Cloudflare. Cloudflare-side credential; never forwarded to Google.
+	 * Set via: wrangler secret put CF_AIG_TOKEN
+	 */
+	CF_AIG_TOKEN?: string;
+	/**
+	 * Legacy escape hatch, disabled by default. Set to "true" to allow the
+	 * Worker to call Google AI Studio directly with a locally-held key
+	 * instead of using AI Gateway BYOK. Discouraged — see provider-gateway
+	 * module docs.
+	 */
+	ALLOW_DIRECT_PROVIDER_KEY?: string;
+	/**
+	 * Google AI Studio API key. Only consulted when
+	 * ALLOW_DIRECT_PROVIDER_KEY === "true" (legacy direct path).
+	 * Under standard BYOK usage this should not be set as a Worker secret.
+	 * Set via: wrangler secret put GOOGLE_AI_STUDIO_KEY
+	 */
+	GOOGLE_AI_STUDIO_KEY?: string;
 }
 
 // ---------------------------------------------------------------------------

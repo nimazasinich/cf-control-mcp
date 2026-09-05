@@ -66,8 +66,15 @@ jobs:
                 echo "=== pushing GATEWAY_AUTH_TOKEN secret ==="
                 printf '%s' "$GATEWAY_AUTH_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put GATEWAY_AUTH_TOKEN 2>&1
               fi
+              if [ -n "$CF_AIG_TOKEN" ]; then
+                echo "=== pushing CF_AIG_TOKEN secret (AI Gateway auth, not the Google key) ==="
+                printf '%s' "$CF_AIG_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put CF_AIG_TOKEN 2>&1
+              fi
+              # Legacy escape hatch only — the Google credential should normally live in
+              # Cloudflare AI Gateway BYOK / Secrets Store, not here. Only pushed if an
+              # operator has explicitly set the GitHub secret for break-glass use.
               if [ -n "$GOOGLE_AI_STUDIO_KEY" ]; then
-                echo "=== pushing GOOGLE_AI_STUDIO_KEY secret ==="
+                echo "=== pushing GOOGLE_AI_STUDIO_KEY secret (legacy direct-call fallback) ==="
                 printf '%s' "$GOOGLE_AI_STUDIO_KEY" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put GOOGLE_AI_STUDIO_KEY 2>&1
               fi
 
@@ -103,6 +110,7 @@ jobs:
           MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
           HF_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
           GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
+          CF_AIG_TOKEN: ${{ secrets.CF_AIG_TOKEN }}
           GOOGLE_AI_STUDIO_KEY: ${{ secrets.GOOGLE_AI_STUDIO_KEY }}
           GH_PAT: ${{ secrets.GH_RUNNER_PAT }}
           GH_REPO: ${{ secrets.GH_RUNNER_REPO }}

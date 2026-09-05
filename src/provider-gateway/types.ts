@@ -17,16 +17,36 @@ export interface GatewayEnv {
 	 */
 	GATEWAY_AUTH_TOKEN?: string;
 	/**
-	 * Google AI Studio API key — stored as a Worker secret.
-	 * Never echoed to clients or logged.
-	 */
-	GOOGLE_AI_STUDIO_KEY?: string;
-	/**
 	 * Cloudflare AI Gateway gateway slug (e.g. "cf-control-mcp").
-	 * When set, requests flow through the gateway for observability/caching.
-	 * When absent, requests go directly to Google AI Studio.
+	 * This is the primary/intended mode: the Google AI Studio credential is
+	 * stored ONCE in Cloudflare AI Gateway (BYOK, backed by Secrets Store)
+	 * under the provider's `default` key alias. The Worker never receives or
+	 * forwards the Google key — it just calls the gateway compat endpoint and
+	 * Cloudflare resolves the stored credential server-side.
 	 */
 	CF_AIG_GATEWAY_SLUG?: string;
+	/**
+	 * Optional AI Gateway auth token (cf-aig-authorization). Only needed if
+	 * the gateway itself is configured as an "authenticated gateway" in
+	 * Cloudflare. This authenticates the Worker → AI Gateway hop and is a
+	 * Cloudflare-side credential — it is NOT the Google provider key and is
+	 * never forwarded to Google.
+	 */
+	CF_AIG_TOKEN?: string;
+	/**
+	 * Legacy escape hatch only: explicitly opt in ("true") to let the Worker
+	 * call Google AI Studio directly with a locally-held key, bypassing AI
+	 * Gateway BYOK entirely. Disabled by default because it contradicts the
+	 * intended architecture (Google credential must live only in Cloudflare
+	 * AI Gateway / Secrets Store, never in the Worker).
+	 */
+	ALLOW_DIRECT_PROVIDER_KEY?: string;
+	/**
+	 * Google AI Studio API key. Only consulted when
+	 * ALLOW_DIRECT_PROVIDER_KEY === "true" for the legacy direct-call path.
+	 * Under the standard BYOK architecture this should not be set at all.
+	 */
+	GOOGLE_AI_STUDIO_KEY?: string;
 }
 
 // ---------------------------------------------------------------------------
