@@ -1,7 +1,7 @@
 {
   "name": "cf-control",
-  "version": "0.1.0",
-  "description": "Inspect and manage a Cloudflare account through the cf-control-mcp remote MCP server.",
+  "version": "1.6.0",
+  "description": "Inspect and manage a Cloudflare account, and search/read/research the open internet, through the cf-control-mcp remote MCP server.",
   "author": {
     "name": "nimazasinich",
     "url": "https://github.com/nimazasinich"
@@ -14,7 +14,11 @@
     "workers",
     "dns",
     "kv",
-    "cache"
+    "cache",
+    "web-search",
+    "web-fetch",
+    "browser-rendering",
+    "research"
   ],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
