@@ -5,9 +5,10 @@ import { applyHealthFidelity } from "./ui/health-fidelity";
 import { applyLoadingFidelity } from "./ui/loading-fidelity";
 import { applyModelsFidelity } from "./ui/models-fidelity";
 import { applyProvidersFidelity } from "./ui/providers-fidelity";
+import { applyRoutingFidelity } from "./ui/routing-fidelity";
 import { applySettingsFidelity } from "./ui/settings-fidelity";
 import { applyUsageFidelity } from "./ui/usage-fidelity";
 
 export function dashboardHtml(): string {
-	return applyUsageFidelity(applySettingsFidelity(applyAuditFidelity(applyHealthFidelity(applyLoadingFidelity(applyProvidersFidelity(applyModelsFidelity(baseDashboardHtml())))))));
+	return applyRoutingFidelity(applyUsageFidelity(applySettingsFidelity(applyAuditFidelity(applyHealthFidelity(applyLoadingFidelity(applyProvidersFidelity(applyModelsFidelity(baseDashboardHtml()))))))));
 }
