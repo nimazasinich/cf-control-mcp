@@ -1,0 +1,111 @@
+name: Temporary apply GitHub log redirect fix
+
+on:
+  push:
+    branches:
+      - fix/github-job-log-redirect
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/github-job-log-redirect
+          fetch-depth: 0
+
+      - name: Patch ghGetRunLog safely
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("src/index.ts")
+          source = path.read_text(encoding="utf-8")
+          pattern = re.compile(
+              r'/\*\* Fetches the plain-text log for the first job of a completed run\. \*/\n'
+              r'async function ghGetRunLog\(env: Env, runId: number\): Promise<string> \{.*?\n\}\n\n'
+              r'export const tools:',
+              re.S,
+          )
+          replacement = r'''/** Fetches the plain-text log for the first job of a completed run. */
+          async function ghGetRunLog(env: Env, runId: number): Promise<string> {
+          	const repo = ghRepo(env);
+          	const jobsData = await ghFetch(env, `/repos/${repo}/actions/runs/${runId}/jobs`);
+          	const job = (jobsData.jobs ?? [])[0];
+          	if (!job) return "(no jobs found for this run yet)";
+
+          	// GitHub's job-log endpoint returns a temporary redirect to a signed URL.
+          	// Cloudflare Workers forwards all headers when redirect="follow", even to a
+          	// different hostname, so following automatically would disclose GITHUB_PAT.
+          	// Stop at the GitHub redirect, then fetch the signed URL without credentials.
+          	const apiResponse = await fetchWithTimeout(
+          		`https://api.github.com/repos/${repo}/actions/jobs/${job.id}/logs`,
+          		{
+          			redirect: "manual",
+          			headers: {
+          				Authorization: `Bearer ${env.GITHUB_PAT}`,
+          				Accept: "application/vnd.github+json",
+          				"X-GitHub-Api-Version": "2022-11-28",
+          				"User-Agent": "cf-control-mcp",
+          			},
+          		},
+          		GITHUB_TIMEOUT_MS,
+          		"GitHub job logs redirect",
+          	);
+
+          	let logResponse = apiResponse;
+          	if (apiResponse.status >= 300 && apiResponse.status < 400) {
+          		const location = apiResponse.headers.get("location");
+          		if (!location) throw new Error(`GitHub job logs redirect (${apiResponse.status}) missing Location header`);
+
+          		let signedUrl: URL;
+          		try {
+          			signedUrl = new URL(location);
+          		} catch {
+          			throw new Error("GitHub job logs redirect returned an invalid Location URL");
+          		}
+          		if (signedUrl.protocol !== "https:") {
+          			throw new Error("GitHub job logs redirect must use https");
+          		}
+
+          		logResponse = await fetchWithTimeout(
+          			signedUrl.toString(),
+          			{ redirect: "follow" },
+          			GITHUB_TIMEOUT_MS,
+          			"GitHub job logs download",
+          		);
+          	} else if (!apiResponse.ok) {
+          		throw new Error(`GitHub API error (${apiResponse.status}) fetching job logs`);
+          	}
+
+          	if (!logResponse.ok) {
+          		throw new Error(`GitHub job log download error (${logResponse.status})`);
+          	}
+          	const text = await logResponse.text();
+          	return text.length > 60_000 ? `${text.slice(0, 60_000)}\n... [truncated]` : text;
+          }
+
+          export const tools:'''
+
+          updated, count = pattern.subn(replacement, source)
+          if count != 1:
+              raise SystemExit(f"expected exactly one ghGetRunLog block, replaced {count}")
+          path.write_text(updated, encoding="utf-8")
+          PY
+
+          grep -n 'redirect: "manual"' src/index.ts
+          grep -n 'GitHub job logs download' src/index.ts
+
+      - name: Remove temporary workflow and commit patch
+        run: |
+          git rm .github/workflows/_apply-gh-log-redirect-fix.yml
+          git config user.email "actions@github.com"
+          git config user.name "github-actions[bot]"
+          git add src/index.ts
+          git commit -m "fix: strip GitHub PAT before job-log redirect [skip ci]"
+          git push origin HEAD:fix/github-job-log-redirect
