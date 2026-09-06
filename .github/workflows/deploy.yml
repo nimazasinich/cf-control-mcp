@@ -10,6 +10,7 @@ on:
       - 'package-lock.json'
       - 'wrangler.jsonc'
       - 'scripts/oauth_smoke.py'
+      - 'scripts/verify_production.py'
       - '.github/workflows/deploy.yml'
 
 permissions:
@@ -25,88 +26,51 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Typecheck
         run: npx tsc --noEmit
 
-      - name: Resolve Cloudflare account ID
-        id: account
+      - name: Validate required production secrets
+        env:
+          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
+          CF_AIG_TOKEN: ${{ secrets.CF_AIG_TOKEN }}
         run: |
-          ACCOUNT_ID=$(curl -s -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            "https://api.cloudflare.com/client/v4/accounts?per_page=1" | \
-            python3 -c "import json,sys;d=json.load(sys.stdin);print(d['result'][0]['id'])")
-          echo "id=$ACCOUNT_ID" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          missing=0
+          for name in MCP_AUTH_TOKEN CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID GATEWAY_AUTH_TOKEN CF_AIG_TOKEN; do
+            if [ -z "${!name:-}" ]; then
+              echo "MISSING_REQUIRED_SECRET: $name"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          echo "PASS: all required production secrets are configured"
+
+      - name: Verify management token has access to the explicit account
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-
-      - name: Deploy Worker and push secrets
-        id: run
-        continue-on-error: true
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          set +e
-          {
-            echo "=== wrangler deploy ==="
-            CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler deploy 2>&1
-            DEPLOY_EXIT=$?
-            echo "deploy exit code: $DEPLOY_EXIT"
+          set -euo pipefail
+          code=$(curl --silent --show-error --output /tmp/account.json --write-out '%{http_code}' \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}")
+          if [ "$code" != "200" ]; then
+            echo "FAIL: management token cannot access configured CLOUDFLARE_ACCOUNT_ID (HTTP $code)"
+            exit 1
+          fi
+          echo "PASS: management token can access configured account"
 
-            if [ "$DEPLOY_EXIT" -eq 0 ]; then
-              echo "=== pushing secrets ==="
-              printf '%s' "$MCP_AUTH_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put MCP_AUTH_TOKEN 2>&1
-              printf '%s' "$CF_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put CLOUDFLARE_API_TOKEN 2>&1
-              printf '%s' "$ACCOUNT_ID" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put CLOUDFLARE_ACCOUNT_ID 2>&1
-              if [ -n "$HF_TOKEN" ]; then
-                echo "=== pushing HUGGINGFACE_TOKEN secret ==="
-                printf '%s' "$HF_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put HUGGINGFACE_TOKEN 2>&1
-              fi
-
-              # --- Provider Gateway (/v1/*) secrets ---
-              if [ -n "$GATEWAY_AUTH_TOKEN" ]; then
-                echo "=== pushing GATEWAY_AUTH_TOKEN secret ==="
-                printf '%s' "$GATEWAY_AUTH_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put GATEWAY_AUTH_TOKEN 2>&1
-              fi
-              if [ -n "$CF_AIG_TOKEN" ]; then
-                echo "=== pushing CF_AIG_TOKEN secret (AI Gateway auth, not the Google key) ==="
-                printf '%s' "$CF_AIG_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put CF_AIG_TOKEN 2>&1
-              fi
-              # Legacy escape hatch only — the Google credential should normally live in
-              # Cloudflare AI Gateway BYOK / Secrets Store, not here. Only pushed if an
-              # operator has explicitly set the GitHub secret for break-glass use.
-              if [ -n "$GOOGLE_AI_STUDIO_KEY" ]; then
-                echo "=== pushing GOOGLE_AI_STUDIO_KEY secret (legacy direct-call fallback) ==="
-                printf '%s' "$GOOGLE_AI_STUDIO_KEY" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put GOOGLE_AI_STUDIO_KEY 2>&1
-              fi
-
-              # --- Optional integrations: push each only when the secret is present ---
-              # GitHub real-runner sandbox (gh_run_code / gh_get_run_result)
-              if [ -n "$GH_PAT" ]; then
-                echo "=== pushing GITHUB_PAT secret ==="
-                printf '%s' "$GH_PAT" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put GITHUB_PAT 2>&1
-              fi
-              if [ -n "$GH_REPO" ]; then
-                echo "=== pushing GITHUB_REPO secret ==="
-                printf '%s' "$GH_REPO" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put GITHUB_REPO 2>&1
-              fi
-              # Internet Intelligence search providers (all optional; DDG fallback needs no key)
-              if [ -n "$BRAVE_KEY" ]; then
-                echo "=== pushing BRAVE_SEARCH_API_KEY secret ==="
-                printf '%s' "$BRAVE_KEY" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put BRAVE_SEARCH_API_KEY 2>&1
-              fi
-              if [ -n "$TAVILY_KEY" ]; then
-                echo "=== pushing TAVILY_API_KEY secret ==="
-                printf '%s' "$TAVILY_KEY" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put TAVILY_API_KEY 2>&1
-              fi
-              if [ -n "$EXA_KEY" ]; then
-                echo "=== pushing EXA_API_KEY secret ==="
-                printf '%s' "$EXA_KEY" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put EXA_API_KEY 2>&1
-              fi
-            fi
-          } > deploy.log 2>&1
-          cat deploy.log
-          echo "final_exit=$DEPLOY_EXIT" >> "$GITHUB_OUTPUT"
+      - name: Deploy Worker and push required/optional secrets
         env:
           CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
           HF_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
           GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
@@ -117,21 +81,61 @@ jobs:
           BRAVE_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
           TAVILY_KEY: ${{ secrets.TAVILY_API_KEY }}
           EXA_KEY: ${{ secrets.EXA_API_KEY }}
-          ACCOUNT_ID: ${{ steps.account.outputs.id }}
-
-      - name: Verify live OAuth and MCP flow
-        if: steps.run.outputs.final_exit == '0'
         run: |
-          {
-            echo "=== live OAuth/MCP verification ==="
-            MCP_BASE_URL="https://cf-control-mcp.amin-chinisaz-edu.workers.dev" python3 scripts/oauth_smoke.py
-          } >> deploy.log 2>&1
-          cat deploy.log
+          set -euo pipefail
+          exec > >(tee deploy.log) 2>&1
+
+          echo "=== wrangler deploy ==="
+          CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler deploy
+
+          echo "=== pushing required Worker secrets ==="
+          printf '%s' "$MCP_AUTH_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put MCP_AUTH_TOKEN
+          printf '%s' "$CF_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put CLOUDFLARE_API_TOKEN
+          printf '%s' "$ACCOUNT_ID" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put CLOUDFLARE_ACCOUNT_ID
+          printf '%s' "$GATEWAY_AUTH_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put GATEWAY_AUTH_TOKEN
+          printf '%s' "$CF_AIG_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put CF_AIG_TOKEN
+
+          echo "=== pushing optional integration secrets ==="
+          if [ -n "$HF_TOKEN" ]; then
+            printf '%s' "$HF_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put HUGGINGFACE_TOKEN
+          fi
+          if [ -n "$GOOGLE_AI_STUDIO_KEY" ]; then
+            echo "WARNING: GOOGLE_AI_STUDIO_KEY legacy break-glass secret is configured"
+            printf '%s' "$GOOGLE_AI_STUDIO_KEY" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put GOOGLE_AI_STUDIO_KEY
+          fi
+          if [ -n "$GH_PAT" ]; then
+            printf '%s' "$GH_PAT" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put GITHUB_PAT
+          fi
+          if [ -n "$GH_REPO" ]; then
+            printf '%s' "$GH_REPO" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put GITHUB_REPO
+          fi
+          if [ -n "$BRAVE_KEY" ]; then
+            printf '%s' "$BRAVE_KEY" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put BRAVE_SEARCH_API_KEY
+          fi
+          if [ -n "$TAVILY_KEY" ]; then
+            printf '%s' "$TAVILY_KEY" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put TAVILY_API_KEY
+          fi
+          if [ -n "$EXA_KEY" ]; then
+            printf '%s' "$EXA_KEY" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put EXA_API_KEY
+          fi
+
+      - name: Verify live OAuth/MCP and full production acceptance
         env:
           MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
+          CF_AIG_TOKEN: ${{ secrets.CF_AIG_TOKEN }}
           HF_LIVE_CHECK: ${{ secrets.HUGGINGFACE_TOKEN != '' && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          exec > >(tee -a deploy.log) 2>&1
+          echo "=== live OAuth/MCP verification ==="
+          MCP_BASE_URL="https://cf-control-mcp.amin-chinisaz-edu.workers.dev" python3 scripts/oauth_smoke.py
+          echo "=== full production acceptance ==="
+          python3 scripts/verify_production.py
 
-      - name: Commit log
+      - name: Commit deploy log
         if: always()
         run: |
           git config user.email "actions@github.com"
@@ -139,9 +143,5 @@ jobs:
           git add -f deploy.log
           git commit -m "chore: deploy log [skip ci]" || echo "nothing to commit"
           git push || echo "push failed"
-
-      - name: Fail if deploy failed
-        if: steps.run.outputs.final_exit != '0'
-        run: exit 1
 
 # ProxyHarvest MCP v1.2 live redeploy trigger
