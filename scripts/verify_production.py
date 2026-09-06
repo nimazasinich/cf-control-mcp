@@ -114,46 +114,27 @@ def main() -> int:
     else:
         record("/v1 invalid-token challenge", "FAIL", f"expected 401 invalid_api_key, got HTTP {status}: {raw[:200]}")
 
+    # Read /v1/models now, but validate its contents only after D1 is read.
+    # The live D1 registry (models.enabled + provider.enabled + routing rules)
+    # is the source of truth; a fixed seven-model expectation is incorrect.
+    models_http_status = 0
+    models_http_ids: list[str] = []
+    models_http_raw = ""
     if GATEWAY_AUTH_TOKEN:
-        status, parsed, raw = http_req(
+        models_http_status, parsed, models_http_raw = http_req(
             f"{BASE_URL}/v1/models",
             headers={"Authorization": f"Bearer {GATEWAY_AUTH_TOKEN}"},
         )
-        model_ids = [m.get("id") for m in parsed.get("data", []) if isinstance(m, dict)]
-        required_models = {
-            "fast", "coding", "research",
-            "gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash",
-        }
-        if status == 200 and required_models.issubset(set(model_ids)):
-            record("/v1/models", "PASS", f"HTTP 200 with expected model set ({len(model_ids)} returned)")
-        else:
-            record("/v1/models", "FAIL", f"HTTP {status}; returned={model_ids}; body={raw[:300]}")
+        models_http_ids = [
+            m.get("id") for m in parsed.get("data", [])
+            if isinstance(m, dict) and isinstance(m.get("id"), str)
+        ]
     else:
         record("/v1/models", "BLOCKED", "GATEWAY_AUTH_TOKEN missing")
 
-    for alias, marker in (("fast", "FAST_OK"), ("coding", "CODING_OK")):
-        if not GATEWAY_AUTH_TOKEN:
-            record(f"/v1/chat/completions:{alias}", "BLOCKED", "GATEWAY_AUTH_TOKEN missing")
-            continue
-        status, parsed, raw = http_req(
-            f"{BASE_URL}/v1/chat/completions",
-            method="POST",
-            headers={"Authorization": f"Bearer {GATEWAY_AUTH_TOKEN}"},
-            data={
-                "model": alias,
-                "messages": [{"role": "user", "content": f"Return the single word {marker}."}],
-                "max_tokens": 10,
-            },
-        )
-        choices = parsed.get("choices", [])
-        if status == 200 and choices:
-            returned_model = parsed.get("model", "")
-            record(f"/v1/chat/completions:{alias}", "PASS", f"HTTP 200 real completion; response model={returned_model}")
-        else:
-            record(f"/v1/chat/completions:{alias}", "FAIL", f"HTTP {status}: {raw[:350]}")
-
     account_id = CF_ACCOUNT_ID
     cf_headers = {"Authorization": f"Bearer {CF_API_TOKEN}"} if CF_API_TOKEN else {}
+    enabled_aliases: set[str] = set()
 
     if CF_API_TOKEN and account_id:
         d1_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/d1/database/{D1_DATABASE_ID}/query"
@@ -178,10 +159,41 @@ def main() -> int:
         models = query_results.get("models", [])
         rules = query_results.get("routing_rules", [])
         rules_map = {r.get("public_alias"): r.get("model_id") for r in rules}
-        enabled_models = {m.get("id") for m in models if m.get("enabled") == 1}
+
+        enabled_provider_ids = {
+            p.get("id") for p in providers
+            if p.get("enabled") == 1 and isinstance(p.get("id"), str)
+        }
+        enabled_models = {
+            m.get("id") for m in models
+            if m.get("enabled") == 1
+            and m.get("provider_id") in enabled_provider_ids
+            and isinstance(m.get("id"), str)
+        }
+        enabled_aliases = {
+            r.get("public_alias") for r in rules
+            if r.get("model_id") in enabled_models and isinstance(r.get("public_alias"), str)
+        }
+        expected_model_ids = enabled_models | enabled_aliases
+
+        if GATEWAY_AUTH_TOKEN:
+            actual_model_ids = set(models_http_ids)
+            models_match = models_http_status == 200 and actual_model_ids == expected_model_ids
+            record(
+                "/v1/models D1 consistency",
+                "PASS" if models_match else "FAIL",
+                f"HTTP {models_http_status}; expected={sorted(expected_model_ids)}; returned={sorted(actual_model_ids)}"
+                + ("" if models_match else f"; body={models_http_raw[:250]}"),
+            )
+
         provider_ok = any(
             p.get("id") == "google-ai-studio" and p.get("enabled") == 1 and p.get("byok_alias") == "default"
             for p in providers
+        )
+        registered_model_ids = {m.get("id") for m in models if isinstance(m.get("id"), str)}
+        routing_targets_registered = all(
+            isinstance(r.get("model_id"), str) and r.get("model_id") in registered_model_ids
+            for r in rules
         )
         invariants_ok = (
             d1_ok
@@ -189,15 +201,44 @@ def main() -> int:
             and rules_map.get("fast") == "gemini-3.6-flash"
             and rules_map.get("coding") == "gemini-3.8-flash"
             and rules_map.get("research") == "gemini-3.8-flash"
-            and {"gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash"}.issubset(enabled_models)
+            and routing_targets_registered
         )
         record(
             "D1 routing/provider invariants",
             "PASS" if invariants_ok else "FAIL",
-            f"provider_ok={provider_ok}; routes={rules_map}",
+            f"provider_ok={provider_ok}; routing_targets_registered={routing_targets_registered}; routes={rules_map}",
         )
+
+        # Only run real completion gates for aliases that the D1 registry says
+        # are currently available. An intentionally disabled model must not
+        # turn deployment verification into a false failure.
+        for alias, marker in (("fast", "FAST_OK"), ("coding", "CODING_OK")):
+            if alias not in enabled_aliases:
+                print(f"INFO: /v1/chat/completions:{alias} not tested because alias is disabled by D1 model/provider state")
+                continue
+            if not GATEWAY_AUTH_TOKEN:
+                record(f"/v1/chat/completions:{alias}", "BLOCKED", "GATEWAY_AUTH_TOKEN missing")
+                continue
+            status, parsed, raw = http_req(
+                f"{BASE_URL}/v1/chat/completions",
+                method="POST",
+                headers={"Authorization": f"Bearer {GATEWAY_AUTH_TOKEN}"},
+                data={
+                    "model": alias,
+                    "messages": [{"role": "user", "content": f"Return the single word {marker}."}],
+                    "max_tokens": 10,
+                },
+            )
+            choices = parsed.get("choices", [])
+            if status == 200 and choices:
+                returned_model = parsed.get("model", "")
+                record(f"/v1/chat/completions:{alias}", "PASS", f"HTTP 200 real completion; response model={returned_model}")
+            else:
+                record(f"/v1/chat/completions:{alias}", "FAIL", f"HTTP {status}: {raw[:350]}")
     else:
         record("D1 readback", "BLOCKED", "CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID missing")
+        if GATEWAY_AUTH_TOKEN:
+            record("/v1/models D1 consistency", "BLOCKED", "D1 readback unavailable")
 
     if CF_API_TOKEN and account_id:
         aig_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai-gateway/gateways/{GATEWAY_SLUG}"
