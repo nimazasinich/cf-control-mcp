@@ -435,8 +435,7 @@ async function ghGetRunLog(env: Env, runId: number): Promise<string> {
 		throw new Error(`GitHub job log download error (${logResponse.status})`);
 	}
 	const text = await logResponse.text();
-	return text.length > 60_000 ? `${text.slice(0, 60_000)}
-... [truncated]` : text;
+	return text.length > 60_000 ? `${text.slice(0, 60_000)}\n... [truncated]` : text;
 }
 
 export const tools: ToolDef[] = [
