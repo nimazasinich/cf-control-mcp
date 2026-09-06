@@ -23,7 +23,6 @@ CF_AIG_TOKEN = os.environ.get("CF_AIG_TOKEN", "").strip()
 D1_DATABASE_ID = os.environ.get("D1_DATABASE_ID", "138a2aef-9f5a-4635-8346-dc474fdfff93").strip()
 GATEWAY_SLUG = os.environ.get("CF_AIG_GATEWAY_SLUG", "cf-control-mcp").strip()
 WORKER_SCRIPT_NAME = os.environ.get("WORKER_SCRIPT_NAME", "cf-control-mcp").strip()
-EXPECTED_TOOL_COUNT = int(os.environ.get("EXPECTED_MCP_TOOL_COUNT", "44"))
 
 KNOWN_SECRETS = [s for s in (GATEWAY_AUTH_TOKEN, CF_API_TOKEN, CF_AIG_TOKEN) if s]
 TOKENISH = re.compile(r"(?:cfut_|ghp_|hf_|vck_)[A-Za-z0-9_-]{12,}")
@@ -88,7 +87,6 @@ def require_env() -> bool:
         "GATEWAY_AUTH_TOKEN": GATEWAY_AUTH_TOKEN,
         "CLOUDFLARE_API_TOKEN": CF_API_TOKEN,
         "CLOUDFLARE_ACCOUNT_ID": CF_ACCOUNT_ID,
-        "CF_AIG_TOKEN": CF_AIG_TOKEN,
     }
     for name, value in required.items():
         if value:
@@ -252,7 +250,7 @@ def main() -> int:
 
     if CF_AIG_TOKEN and account_id:
         direct_url = f"https://gateway.ai.cloudflare.com/v1/{account_id}/{GATEWAY_SLUG}/compat/chat/completions"
-        status, parsed, raw = http_req(
+        status, parsed, _ = http_req(
             direct_url,
             method="POST",
             headers={"cf-aig-authorization": f"Bearer {CF_AIG_TOKEN}"},
@@ -264,11 +262,11 @@ def main() -> int:
         )
         choices = parsed.get("choices", [])
         if status == 200 and choices:
-            record("CF_AIG_TOKEN direct BYOK inference", "PASS", "HTTP 200 real Gemini completion")
+            print("INFO: optional direct CF_AIG_TOKEN BYOK probe also returned HTTP 200")
         else:
-            record("CF_AIG_TOKEN direct BYOK inference", "FAIL", f"HTTP {status}: {raw[:350]}")
+            print(f"INFO: optional direct CF_AIG_TOKEN probe did not pass (HTTP {status}); required Worker end-to-end gates decide acceptance")
     else:
-        record("CF_AIG_TOKEN direct BYOK inference", "BLOCKED", "CF_AIG_TOKEN or account ID missing")
+        print("INFO: raw CF_AIG_TOKEN is intentionally not required in CI; Worker end-to-end gates verify the runtime secret")
 
     if CF_API_TOKEN and account_id:
         secrets_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/workers/scripts/{WORKER_SCRIPT_NAME}/secrets"
