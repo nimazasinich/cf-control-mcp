@@ -1,0 +1,82 @@
+name: Verify live Vercel Admin
+
+on:
+  push:
+    branches: [verify/vercel-admin-live]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ADMIN_URL: https://cf-control-mcp-admin-dreammakers-projects-6bd02e6d.vercel.app
+      WORKER_BASE_URL: https://cf-control-mcp.amin-chinisaz-edu.workers.dev
+      MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+    steps:
+      - name: Verify Vercel Admin login/session and MCP Tools parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${MCP_AUTH_TOKEN:-}" || { echo "MISSING_REQUIRED_SECRET: MCP_AUTH_TOKEN"; exit 1; }
+
+          ready=0
+          for attempt in $(seq 1 12); do
+            code="$(curl --silent --show-error --output /tmp/admin-login.html --write-out '%{http_code}' "$ADMIN_URL/admin" || true)"
+            if [ "$code" = "200" ] && grep -q 'cf-control-mcp — Admin' /tmp/admin-login.html; then
+              ready=1
+              break
+            fi
+            echo "INFO: Vercel Admin not ready yet (attempt=$attempt HTTP=${code:-curl_error})"
+            sleep 5
+          done
+          if [ "$ready" != "1" ]; then
+            echo "FAIL: Vercel Admin login page did not become ready"
+            exit 1
+          fi
+          echo "PASS: Vercel /admin serves the live Worker Admin login page"
+
+          unauth_code="$(curl --silent --show-error --output /tmp/admin-unauth.json --write-out '%{http_code}' "$ADMIN_URL/admin/api/tools")"
+          if [ "$unauth_code" != "401" ]; then
+            echo "FAIL: unauthenticated Vercel /admin/api/tools expected 401, got HTTP=$unauth_code"
+            exit 1
+          fi
+          echo "PASS: Vercel Admin API remains owner-session protected"
+
+          login_code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --cookie-jar /tmp/admin-cookies.txt --request POST "$ADMIN_URL/admin/login" --data-urlencode "token=$MCP_AUTH_TOKEN")"
+          if [ "$login_code" != "302" ]; then
+            echo "FAIL: Vercel Admin login expected 302, got HTTP=$login_code"
+            exit 1
+          fi
+
+          auth_code="$(curl --silent --show-error --output /tmp/admin-tools.json --write-out '%{http_code}' --cookie /tmp/admin-cookies.txt "$ADMIN_URL/admin/api/tools")"
+          if [ "$auth_code" != "200" ]; then
+            echo "FAIL: authenticated Vercel /admin/api/tools HTTP=$auth_code"
+            exit 1
+          fi
+
+          admin_count="$(jq -r '.count // 0' /tmp/admin-tools.json)"
+          admin_len="$(jq -r '.tools | length' /tmp/admin-tools.json)"
+          if [ "$admin_count" != "44" ] || [ "$admin_len" != "44" ]; then
+            echo "FAIL: Vercel Admin MCP Tools catalog count=$admin_count length=$admin_len; expected 44"
+            exit 1
+          fi
+          echo "PASS: authenticated Vercel Admin returns 44 MCP tools"
+
+          curl --silent --show-error --output /tmp/runtime-tools.json \
+            --request POST "$WORKER_BASE_URL/mcp" \
+            --header "Authorization: Bearer $MCP_AUTH_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --header 'Accept: application/json, text/event-stream' \
+            --data '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+
+          jq -S '.tools | map(.name) | sort' /tmp/admin-tools.json > /tmp/admin-names.json
+          jq -S '.result.tools | map(.name) | sort' /tmp/runtime-tools.json > /tmp/runtime-names.json
+          if ! cmp -s /tmp/admin-names.json /tmp/runtime-names.json; then
+            echo "FAIL: Vercel Admin catalog does not match production MCP tools/list"
+            exit 1
+          fi
+
+          echo "FINAL: PASS — Vercel Admin login/session and 44-tool runtime parity verified end-to-end"
