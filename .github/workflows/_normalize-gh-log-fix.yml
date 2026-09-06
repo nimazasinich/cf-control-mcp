@@ -1,0 +1,43 @@
+name: Temporary normalize GitHub log fix
+
+on:
+  push:
+    branches:
+      - fix/github-job-log-redirect
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/github-job-log-redirect
+          fetch-depth: 0
+
+      - name: Restore exact truncation literal
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("src/index.ts")
+          source = path.read_text(encoding="utf-8")
+          old = 'return text.length > 60_000 ? `${text.slice(0, 60_000)}\n... [truncated]` : text;'
+          new = r'return text.length > 60_000 ? `${text.slice(0, 60_000)}\n... [truncated]` : text;'
+          count = source.count(old)
+          if count != 1:
+              raise SystemExit(f"expected one physical-newline truncation literal, found {count}")
+          path.write_text(source.replace(old, new), encoding="utf-8")
+          PY
+          grep -n 'text.length > 60_000' src/index.ts
+
+      - name: Remove temporary workflow and commit
+        run: |
+          git rm .github/workflows/_normalize-gh-log-fix.yml
+          git config user.email "actions@github.com"
+          git config user.name "github-actions[bot]"
+          git add src/index.ts
+          git commit -m "fix: preserve exec log truncation contract"
+          git push origin HEAD:fix/github-job-log-redirect
