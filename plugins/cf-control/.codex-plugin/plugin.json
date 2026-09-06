@@ -1,7 +1,7 @@
 {
   "name": "cf-control",
-  "version": "1.6.0",
-  "description": "Inspect and manage a Cloudflare account, and search/read/research the open internet, through the cf-control-mcp remote MCP server.",
+  "version": "1.8.0",
+  "description": "Inspect and manage Cloudflare, use the v1.8 provider/admin platform, and search/read/research the open internet through the cf-control-mcp remote MCP server.",
   "author": {
     "name": "nimazasinich",
     "url": "https://github.com/nimazasinich"
