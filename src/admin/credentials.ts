@@ -109,11 +109,11 @@ export async function setProviderCredential(
 	// Step 2: Idempotent Provider Config linkage
 	const pcUrl = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai-gateway/gateways/${env.CF_AIG_GATEWAY_SLUG}/provider_configs`;
 	const getPcRes = await fetch(pcUrl, { headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` } });
-	const getPcData = await getPcRes.json<{ success: boolean; result?: Array<{ id: string; provider_slug: string; alias: string; default_config?: boolean }> }>();
+	const getPcData = await getPcRes.json<{ success: boolean; result?: Array<{ id: string; provider_slug: string; alias: string; default_config?: boolean | number }> }>();
 	const existingConfig = getPcData.result?.find((c) => c.provider_slug === providerSlug && c.alias === alias);
 
 	if (existingConfig) {
-		if (existingConfig.default_config === true) {
+		if (existingConfig.default_config === true || existingConfig.default_config === 1) {
 			return { ok: true, configured: true, providerConfigLinked: true, secretId };
 		}
 
