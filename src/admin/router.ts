@@ -106,6 +106,8 @@ export async function handleAdmin(request: Request, env: AdminEnv): Promise<Resp
 			routingRuleCount: rules.length,
 			activeRoutingAliasCount: activeRoutes,
 			unavailableRoutingAliasCount: rules.length - activeRoutes,
+			activeRoutingCount: activeRoutes,
+			unavailableRoutingCount: rules.length - activeRoutes,
 		});
 	}
 
