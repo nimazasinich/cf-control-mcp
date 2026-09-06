@@ -5,7 +5,8 @@ import { applyHealthFidelity } from "./ui/health-fidelity";
 import { applyLoadingFidelity } from "./ui/loading-fidelity";
 import { applyModelsFidelity } from "./ui/models-fidelity";
 import { applyProvidersFidelity } from "./ui/providers-fidelity";
+import { applySettingsFidelity } from "./ui/settings-fidelity";
 
 export function dashboardHtml(): string {
-	return applyAuditFidelity(applyHealthFidelity(applyLoadingFidelity(applyProvidersFidelity(applyModelsFidelity(baseDashboardHtml())))));
+	return applySettingsFidelity(applyAuditFidelity(applyHealthFidelity(applyLoadingFidelity(applyProvidersFidelity(applyModelsFidelity(baseDashboardHtml()))))));
 }
