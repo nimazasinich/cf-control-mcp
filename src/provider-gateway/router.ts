@@ -56,7 +56,7 @@ export async function handleProviderGateway(
 	// -------------------------------------------------------------------------
 
 	if (path === "/v1/models" && request.method === "GET") {
-		return handleModels();
+		return handleModels(env);
 	}
 
 	if (path === "/v1/chat/completions" && request.method === "POST") {
