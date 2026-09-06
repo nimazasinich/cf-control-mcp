@@ -1,11 +1,10 @@
 name: Deploy Admin Gateway to Vercel
 
+# The current repository VERCEL_TOKEN authenticates successfully, but it is
+# not authorized for the Vercel scope that owns cf-control-mcp-admin.
+# Keep this manual-only until a project-scoped token is installed; otherwise
+# ordinary main pushes would create a known-red deployment workflow.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "vercel-admin/**"
-      - ".github/workflows/deploy-vercel-admin.yml"
   workflow_dispatch:
 
 permissions:
@@ -39,16 +38,17 @@ jobs:
           test -n "${MCP_AUTH_TOKEN:-}" || { echo "MISSING_REQUIRED_SECRET: MCP_AUTH_TOKEN"; exit 1; }
           echo "PASS: Vercel deployment and live Admin verification secrets are configured"
 
-      - name: Ensure Vercel project exists
+      - name: Require access to the existing Vercel project
         shell: bash
         run: |
           set -euo pipefail
-          if npx --yes vercel@latest project inspect "$PROJECT_NAME" --token "$VERCEL_TOKEN" >/tmp/vercel-project.txt 2>&1; then
-            echo "PASS: Vercel project already exists: $PROJECT_NAME"
-          else
-            echo "INFO: creating Vercel project: $PROJECT_NAME"
-            npx --yes vercel@latest project add "$PROJECT_NAME" --token "$VERCEL_TOKEN"
+          if ! npx --yes vercel@latest project inspect "$PROJECT_NAME" --token "$VERCEL_TOKEN" >/tmp/vercel-project.txt 2>&1; then
+            echo "BLOCKED: VERCEL_TOKEN is valid but is not authorized for the Vercel scope that owns $PROJECT_NAME."
+            echo "Install a token with access to that project/scope before manually dispatching this workflow."
+            cat /tmp/vercel-project.txt || true
+            exit 1
           fi
+          echo "PASS: Vercel token can access existing project: $PROJECT_NAME"
 
       - name: Deploy Admin gateway to Vercel production
         id: deploy
@@ -73,6 +73,7 @@ jobs:
           login_code="$(curl --silent --show-error --output /tmp/admin-login.html --write-out '%{http_code}' "$DEPLOY_URL/admin")"
           if [ "$login_code" != "200" ]; then
             echo "FAIL: Vercel /admin login page HTTP=$login_code"
+            echo "If this is a 302 to vercel.com/sso-api, disable Vercel Authentication for production before calling the gateway public-ready."
             exit 1
           fi
           grep -q 'cf-control-mcp — Admin' /tmp/admin-login.html || {
