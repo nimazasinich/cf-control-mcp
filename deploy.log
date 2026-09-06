@@ -11,16 +11,16 @@
 
 
 Total Upload: 241.95 KiB / gzip: 55.34 KiB
-Worker Startup Time: 14 ms
+Worker Startup Time: 12 ms
 Your worker has access to the following bindings:
 - D1 Databases:
   - DM_DB: DM_DB (138a2aef-9f5a-4635-8346-dc474fdfff93)
 - Vars:
   - CF_AIG_GATEWAY_SLUG: "cf-control-mcp"
-Uploaded cf-control-mcp (1.59 sec)
+Uploaded cf-control-mcp (1.61 sec)
 Deployed cf-control-mcp triggers (0.11 sec)
   https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-Current Version ID: b09a8da2-9a4c-4269-9af0-10330ea0ad56
+Current Version ID: 4b87fc5c-eebe-4b35-ab94-cce8d9e07b6e
 
 Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
 === pushing required Worker secrets ===
@@ -168,6 +168,7 @@ PASS: gh_run_code dispatched through deployed Worker
 INFO: gh_get_run_result status=not_found_yet; polling again
 INFO: gh_get_run_result status=in_progress; polling again
 PASS: gh_get_run_result completed through deployed Worker with expected log output
-PASS: run_code live Piston success path
-PASS: run_code live Piston non-zero exit path
-FAIL: run_code invalid language: expected a surfaced Piston 4xx error, got 'Tool "run_code" failed: paiza.IO does not support language \'not-a-real-lang\'. Call list_code_runtimes for supported language ids.'
+PASS: run_code live paiza.IO success path
+PASS: run_code live paiza.IO non-zero exit path
+PASS: run_code live paiza.IO invalid-language fail-closed path
+FINAL: PASS — all four exec tools passed live end-to-end smoke verification
