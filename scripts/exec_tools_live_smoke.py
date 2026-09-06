@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 import time
 import urllib.error
@@ -179,19 +178,18 @@ def main() -> int:
     print("============================================================")
     print(f"Target: {BASE_URL}")
 
-    # Real Piston metadata lookup through Worker -> emkc.org.
+    # Capability catalog published by the paiza.IO adapter.
     runtimes, _ = tool_result(101, "list_code_runtimes", {})
     if not isinstance(runtimes, list) or not any(
-        isinstance(row, dict) and row.get("language") == "python" for row in runtimes
+        isinstance(row, dict) and row.get("language") in {"python", "python3"} for row in runtimes
     ):
-        fail("list_code_runtimes: no Python runtime returned by live Piston API")
+        fail("list_code_runtimes: no Python runtime returned by paiza.IO capability catalog")
     print(f"PASS: list_code_runtimes paiza.IO capability catalog ({len(runtimes)} runtimes)")
 
-    # Verify the GitHub Actions execution round-trip before Piston execute so a
-    # Piston-specific upstream failure cannot hide independent GitHub evidence.
+    # Verify the GitHub Actions execution round-trip independently from paiza.IO.
     verify_github_exec()
 
-    # Real Piston success path.
+    # Real paiza.IO success path through the deployed Worker.
     success_payload, _ = tool_result(
         102,
         "run_code",
@@ -203,9 +201,9 @@ def main() -> int:
             "run_code success: expected exit 0 and PAIZA_MCP_EXEC_OK in stdout; "
             f"got code={success_run.get('code')} stdout={str(success_run.get('stdout', ''))[:200]!r}"
         )
-    print("PASS: run_code live Piston success path")
+    print("PASS: run_code live paiza.IO success path")
 
-    # Real Piston non-zero exit path must be returned, not converted to tool failure.
+    # Real paiza.IO non-zero exit path must be returned, not converted to tool failure.
     nonzero_payload, _ = tool_result(
         103,
         "run_code",
@@ -214,22 +212,23 @@ def main() -> int:
     nonzero_run = require_run(nonzero_payload, "run_code non-zero")
     if nonzero_run.get("code") != 3:
         fail(f"run_code non-zero: expected exit 3, got {nonzero_run.get('code')}")
-    print("PASS: run_code live Piston non-zero exit path")
+    print("PASS: run_code live paiza.IO non-zero exit path")
 
-    # Real upstream 4xx must surface as an MCP tool error.
+    # Unsupported language is intentionally rejected locally by the paiza adapter
+    # before an upstream session is created. It must surface as an MCP tool error.
     _, bad_language_text = tool_result(
         104,
         "run_code",
         {"language": "not-a-real-lang", "code": "x"},
         expect_error=True,
     )
-    match = re.search(r"Piston API error \((4\d\d)\)", bad_language_text)
-    if not match:
+    expected_fragment = "paiza.IO does not support language"
+    if expected_fragment not in bad_language_text:
         fail(
-            "run_code invalid language: expected a surfaced Piston 4xx error, got "
+            "run_code invalid language: expected paiza.IO unsupported-language tool error, got "
             f"{bad_language_text[:300]!r}"
         )
-    print(f"PASS: run_code live Piston invalid-language path (HTTP {match.group(1)})")
+    print("PASS: run_code live paiza.IO invalid-language fail-closed path")
 
     print("FINAL: PASS — all four exec tools passed live end-to-end smoke verification")
     return 0
