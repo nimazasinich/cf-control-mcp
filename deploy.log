@@ -10,17 +10,17 @@
   After installation, run Wrangler with `npx wrangler`.
 
 
-Total Upload: 235.57 KiB / gzip: 53.58 KiB
+Total Upload: 241.95 KiB / gzip: 55.34 KiB
 Worker Startup Time: 14 ms
 Your worker has access to the following bindings:
 - D1 Databases:
   - DM_DB: DM_DB (138a2aef-9f5a-4635-8346-dc474fdfff93)
 - Vars:
   - CF_AIG_GATEWAY_SLUG: "cf-control-mcp"
-Uploaded cf-control-mcp (1.41 sec)
-Deployed cf-control-mcp triggers (0.17 sec)
+Uploaded cf-control-mcp (1.59 sec)
+Deployed cf-control-mcp triggers (0.11 sec)
   https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-Current Version ID: c6b8e367-2baa-4c1b-a088-deec661d2b92
+Current Version ID: b09a8da2-9a4c-4269-9af0-10330ea0ad56
 
 Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
 === pushing required Worker secrets ===
@@ -163,9 +163,11 @@ FINAL: PASS — all required production acceptance gates passed
 EXEC TOOLS LIVE SMOKE — deployed Worker /mcp
 ============================================================
 Target: https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-PASS: list_code_runtimes live Piston lookup (87 runtimes)
+PASS: list_code_runtimes paiza.IO capability catalog (31 runtimes)
 PASS: gh_run_code dispatched through deployed Worker
 INFO: gh_get_run_result status=not_found_yet; polling again
 INFO: gh_get_run_result status=in_progress; polling again
 PASS: gh_get_run_result completed through deployed Worker with expected log output
-FAIL: run_code: expected isError=false, got true; tool_text='Tool "run_code" failed: Piston API error (401): {"message":"Public Piston API is now whitelist only as of 2/15/2026. Please host your own instance or go here and read the \\"Important Note\\" to see if you qualify for whitelisting: https://github.com/engineer-man/piston#public-api"}'
+PASS: run_code live Piston success path
+PASS: run_code live Piston non-zero exit path
+FAIL: run_code invalid language: expected a surfaced Piston 4xx error, got 'Tool "run_code" failed: paiza.IO does not support language \'not-a-real-lang\'. Call list_code_runtimes for supported language ids.'
