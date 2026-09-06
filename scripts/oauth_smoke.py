@@ -279,6 +279,28 @@ def main() -> int:
     if tokens.get("scope") != "mcp:read offline_access":
         fail(f"unexpected OAuth scope: {tokens.get('scope')!r}")
 
+    initialize_body = {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "cf-control-oauth-smoke", "version": "1.8.0"},
+        },
+    }
+    initialized, _ = request_json(
+        "/mcp",
+        method="POST",
+        headers={"Authorization": "Bearer " + access_token},
+        body=initialize_body,
+    )
+    init_result = initialized.get("result", {})
+    if init_result.get("protocolVersion") != "2025-06-18":
+        fail(f"MCP initialize returned unexpected protocolVersion: {init_result.get('protocolVersion')!r}")
+    if init_result.get("serverInfo", {}).get("name") != "cf-control-mcp":
+        fail(f"MCP initialize returned unexpected serverInfo: {init_result.get('serverInfo')!r}")
+
     tools_body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
     tools_response, _ = request_json(
         "/mcp",
@@ -286,21 +308,15 @@ def main() -> int:
         headers={"Authorization": "Bearer " + access_token},
         body=tools_body,
     )
-    # OAuth-connected clients are intentionally granted the same full tool
-    # access as the legacy owner-token path (design decision: owner approval
-    # in /authorize is the gate, not a permanent read-only scope). Verify the
-    # write tools are present and reachable, without actually invoking a
-    # destructive one from CI.
-    oauth_tools = {tool["name"] for tool in tools_response["result"]["tools"]}
+    oauth_tool_list = tools_response["result"]["tools"]
+    if len(oauth_tool_list) != 44:
+        fail(f"OAuth tools/list returned {len(oauth_tool_list)} tools; expected 44 for v1.8")
+    oauth_tools = {tool["name"] for tool in oauth_tool_list}
     if not WRITE_TOOLS.issubset(oauth_tools) or "cf_api_request" not in oauth_tools:
         fail(f"OAuth tools/list is missing full write access: {sorted(oauth_tools)}")
     if not READ_ONLY_TOOLS.issubset(oauth_tools):
         fail(f"OAuth tools/list is missing read tools: {sorted(oauth_tools)}")
 
-    # Confirm a write-capable tool call actually executes for an OAuth token
-    # (no "read-only OAuth scope" guard error) using a harmless read-only
-    # Cloudflare API call routed through the newly-added generic passthrough
-    # tool, so nothing is mutated by this check.
     passthrough, _ = request_json(
         "/mcp",
         method="POST",
@@ -370,7 +386,7 @@ def main() -> int:
     if "oauth-protected-resource" not in challenge_header:
         fail("401 response does not advertise OAuth protected-resource metadata")
 
-    print("PASS: OAuth discovery, DCR, consent, PKCE, token exchange, refresh, upgraded MCP tools, legacy path, and 401 challenge")
+    print("PASS: OAuth discovery, DCR, consent, PKCE, token exchange, MCP initialize, refresh, upgraded MCP tools, legacy path, and 401 challenge")
     return 0
 
 
