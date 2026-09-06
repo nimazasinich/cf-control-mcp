@@ -33,6 +33,7 @@ jobs:
           python3 -m py_compile
           scripts/oauth_smoke.py
           scripts/verify_production.py
+          scripts/exec_tools_live_smoke.py
           scripts/install_runtime_secrets.py
           scripts/credential_audit.py
           scripts/apex_cf_bridge.py

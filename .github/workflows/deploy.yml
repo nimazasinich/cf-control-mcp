@@ -11,6 +11,7 @@ on:
       - 'wrangler.jsonc'
       - 'scripts/oauth_smoke.py'
       - 'scripts/verify_production.py'
+      - 'scripts/exec_tools_live_smoke.py'
       - '.github/workflows/deploy.yml'
 
 permissions:
@@ -161,6 +162,15 @@ jobs:
           MCP_BASE_URL="https://cf-control-mcp.amin-chinisaz-edu.workers.dev" python3 scripts/oauth_smoke.py
           echo "=== full production acceptance ==="
           python3 scripts/verify_production.py
+
+      - name: Verify live exec tools end-to-end
+        env:
+          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+          MCP_BASE_URL: https://cf-control-mcp.amin-chinisaz-edu.workers.dev
+        run: |
+          set -euo pipefail
+          exec > >(tee -a deploy.log) 2>&1
+          python3 scripts/exec_tools_live_smoke.py
 
       - name: Commit deploy log
         if: always()
