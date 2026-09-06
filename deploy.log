@@ -11,16 +11,16 @@
 
 
 Total Upload: 233.75 KiB / gzip: 53.09 KiB
-Worker Startup Time: 15 ms
+Worker Startup Time: 12 ms
 Your worker has access to the following bindings:
 - D1 Databases:
   - DM_DB: DM_DB (138a2aef-9f5a-4635-8346-dc474fdfff93)
 - Vars:
   - CF_AIG_GATEWAY_SLUG: "cf-control-mcp"
-Uploaded cf-control-mcp (1.32 sec)
-Deployed cf-control-mcp triggers (0.06 sec)
+Uploaded cf-control-mcp (1.73 sec)
+Deployed cf-control-mcp triggers (0.16 sec)
   https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-Current Version ID: 821fe846-82a0-46e1-8bdc-0426e121fa2f
+Current Version ID: 767172d8-41aa-4a5a-b23d-f4c30fba5aec
 
 Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
 === pushing required Worker secrets ===
@@ -133,11 +133,29 @@ PASS: D1:models — HTTP 200; 7 rows
 PASS: D1:routing_rules — HTTP 200; 3 rows
 PASS: /v1/models D1 consistency — HTTP 200; expected=['coding', 'fast', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash', 'research']; returned=['coding', 'fast', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash', 'research']
 PASS: D1 routing/provider invariants — provider_ok=True; routing_targets_registered=True; routes={'fast': 'gemini-3.6-flash', 'coding': 'gemini-3.8-flash', 'research': 'gemini-3.8-flash'}
-Traceback (most recent call last):
-  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/verify_production.py", line 344, in <module>
-    sys.exit(main())
-             ^^^^^^
-  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/verify_production.py", line 232, in main
-    choices = parsed.get("choices", [])
-              ^^^^^^^^^^
-AttributeError: 'list' object has no attribute 'get'
+PASS: /v1/chat/completions:fast — HTTP 200 real completion; response model=gemini-3.6-flash
+PASS: /v1/chat/completions:coding — HTTP 200 real completion; response model=gemini-3.8-flash
+PASS: AI Gateway authentication — authentication=true
+PASS: BYOK Secrets Store — secret=cf-control-mcp_google-ai-studio_default; active=True; ai_gateway_scope=True; HTTP 200
+PASS: BYOK Provider Config — HTTP 200; matching default config=True
+INFO: raw CF_AIG_TOKEN is intentionally not required in CI; Worker end-to-end gates verify the runtime secret
+PASS: Worker required secret bindings — HTTP 200; missing=[]
+=================================================================
+FINAL ACCEPTANCE MATRIX
+=================================================================
+PASS    | GATE | environment:GATEWAY_AUTH_TOKEN | configured
+PASS    | GATE | environment:CLOUDFLARE_API_TOKEN | configured
+PASS    | GATE | environment:CLOUDFLARE_ACCOUNT_ID | configured
+PASS    | GATE | /v1 invalid-token challenge | HTTP 401 invalid_api_key
+PASS    | GATE | D1:providers | HTTP 200; 1 rows
+PASS    | GATE | D1:models | HTTP 200; 7 rows
+PASS    | GATE | D1:routing_rules | HTTP 200; 3 rows
+PASS    | GATE | /v1/models D1 consistency | HTTP 200; expected=['coding', 'fast', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash', 'research']; returned=['coding', 'fast', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash', 'research']
+PASS    | GATE | D1 routing/provider invariants | provider_ok=True; routing_targets_registered=True; routes={'fast': 'gemini-3.6-flash', 'coding': 'gemini-3.8-flash', 'research': 'gemini-3.8-flash'}
+PASS    | GATE | /v1/chat/completions:fast | HTTP 200 real completion; response model=gemini-3.6-flash
+PASS    | GATE | /v1/chat/completions:coding | HTTP 200 real completion; response model=gemini-3.8-flash
+PASS    | GATE | AI Gateway authentication | authentication=true
+PASS    | GATE | BYOK Secrets Store | secret=cf-control-mcp_google-ai-studio_default; active=True; ai_gateway_scope=True; HTTP 200
+PASS    | GATE | BYOK Provider Config | HTTP 200; matching default config=True
+PASS    | GATE | Worker required secret bindings | HTTP 200; missing=[]
+FINAL: PASS — all required production acceptance gates passed
