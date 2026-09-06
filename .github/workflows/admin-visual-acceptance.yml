@@ -26,9 +26,22 @@ jobs:
     name: 1368x753 screenshot generation
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    env:
+      EXACT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - name: Checkout exact SHA
+      - name: Checkout exact branch SHA
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Prove exact SHA checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "requested_exact_sha=$EXACT_SHA"
+          echo "checked_out_sha=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXACT_SHA"
 
       - name: Setup Node 22
         uses: actions/setup-node@v4
@@ -106,6 +119,62 @@ jobs:
               }
           }
 
+          capture login "$LOGIN" 1000
+          capture loading "$DASH?visualState=loading#overview" 900
+          capture loading-degraded "$DASH?visualState=degraded#overview" 3400
+          capture overview "$DASH?visualState=normal#overview"
+          capture providers "$DASH?visualState=normal#providers"
+          capture models "$DASH?visualState=normal#models"
+          capture routing "$DASH?visualState=normal#routing"
+          capture mcp-tools "$DASH?visualState=normal#mcp-tools"
+          capture health "$DASH?visualState=normal#health"
+          capture usage "$DASH?visualState=normal#usage"
+          capture audit "$DASH?visualState=normal#logs"
+          capture settings-environment "$DASH?visualState=normal&settingsView=environment#settings"
+          capture settings-security "$DASH?visualState=normal&settingsView=security#settings"
+          capture settings-session "$DASH?visualState=normal&settingsView=session#settings"
+          capture settings-boundary "$DASH?visualState=normal&settingsView=boundary#settings"
+          capture overview-empty "$DASH?visualState=empty#overview"
+          capture health-error "$DASH?visualState=health-error#health" 3900
+
+      - name: Verify screenshot dimensions and write exact-SHA manifest
+        run: |
+          node <<'NODE'
+          const fs=require('node:fs');
+          const path=require('node:path');
+          const dir='admin-visual-artifacts/screenshots';
+          const files=fs.readdirSync(dir).filter(f=>f.endsWith('.png')).sort();
+          if(files.length<17) throw new Error(`expected at least 17 screenshots, found ${files.length}`);
+          for(const file of files){
+            const b=fs.readFileSync(path.join(dir,file));
+            if(b.toString('ascii',1,4)!=='PNG') throw new Error(`${file}: not PNG`);
+            const w=b.readUInt32BE(16),h=b.readUInt32BE(20);
+            if(w!==1368||h!==753) throw new Error(`${file}: expected 1368x753, got ${w}x${h}`);
+          }
+          fs.writeFileSync('admin-visual-artifacts/SCREENSHOT_MANIFEST.txt',[
+            `exact_sha=${process.env.EXACT_SHA}`,
+            'viewport=1368x753',
+            `screenshots=${files.length}`,
+            ...files,
+            '',
+            'SCREENSHOTS GENERATED',
+            'VISUAL ACCEPTANCE PASS requires inspection of the PNG artifact.',
+          ].join('\n'));
+          console.log(`Verified ${files.length} PNGs at 1368x753 for ${process.env.EXACT_SHA}`);
+          NODE
+
+      - name: Run Admin UI contract tests on same exact SHA
+        run: npm run test:internet
+
+      - name: Audit rendered runtime and page overflow
+        shell: bash
+        env:
+          CHROME: ${{ steps.chrome.outputs.binary }}
+        run: |
+          set -euo pipefail
+          ROOT="$PWD/admin-visual-artifacts"
+          DASH="file://$ROOT/dashboard-fixture.html"
+
           inspect_dom() {
             local name="$1"
             local url="$2"
@@ -131,26 +200,6 @@ jobs:
             }
           }
 
-          capture login "$LOGIN" 1000
-          capture loading "$DASH?visualState=loading#overview" 900
-          capture loading-degraded "$DASH?visualState=degraded#overview" 3400
-
-          capture overview "$DASH?visualState=normal#overview"
-          capture providers "$DASH?visualState=normal#providers"
-          capture models "$DASH?visualState=normal#models"
-          capture routing "$DASH?visualState=normal#routing"
-          capture mcp-tools "$DASH?visualState=normal#mcp-tools"
-          capture health "$DASH?visualState=normal#health"
-          capture usage "$DASH?visualState=normal#usage"
-          capture audit "$DASH?visualState=normal#logs"
-          capture settings-environment "$DASH?visualState=normal&settingsView=environment#settings"
-          capture settings-security "$DASH?visualState=normal&settingsView=security#settings"
-          capture settings-session "$DASH?visualState=normal&settingsView=session#settings"
-          capture settings-boundary "$DASH?visualState=normal&settingsView=boundary#settings"
-
-          capture overview-empty "$DASH?visualState=empty#overview"
-          capture health-error "$DASH?visualState=health-error#health" 3900
-
           for page in overview providers models routing mcp-tools health usage audit; do
             hash="$page"
             [ "$page" = "audit" ] && hash="logs"
@@ -160,40 +209,11 @@ jobs:
             inspect_dom "settings-$view" "$DASH?visualState=normal&settingsView=$view#settings"
           done
 
-      - name: Verify screenshot dimensions and manifest
-        run: |
-          node <<'NODE'
-          const fs=require('node:fs');
-          const path=require('node:path');
-          const dir='admin-visual-artifacts/screenshots';
-          const files=fs.readdirSync(dir).filter(f=>f.endsWith('.png')).sort();
-          if(files.length<17) throw new Error(`expected at least 17 screenshots, found ${files.length}`);
-          for(const file of files){
-            const b=fs.readFileSync(path.join(dir,file));
-            if(b.toString('ascii',1,4)!=='PNG') throw new Error(`${file}: not PNG`);
-            const w=b.readUInt32BE(16),h=b.readUInt32BE(20);
-            if(w!==1368||h!==753) throw new Error(`${file}: expected 1368x753, got ${w}x${h}`);
-          }
-          fs.writeFileSync('admin-visual-artifacts/SCREENSHOT_MANIFEST.txt',[
-            `exact_sha=${process.env.GITHUB_SHA}`,
-            'viewport=1368x753',
-            `screenshots=${files.length}`,
-            ...files,
-            '',
-            'SCREENSHOTS GENERATED',
-            'VISUAL ACCEPTANCE PASS requires human/agent inspection of the PNG artifact.',
-          ].join('\n'));
-          console.log(`Verified ${files.length} PNGs at 1368x753`);
-          NODE
-
-      - name: Run Admin UI contract tests on same SHA
-        run: npm run test:internet
-
       - name: Upload screenshot evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: admin-visual-1368x753-${{ github.sha }}
+          name: admin-visual-1368x753-${{ env.EXACT_SHA }}
           path: admin-visual-artifacts/
           if-no-files-found: error
           retention-days: 14
@@ -201,5 +221,5 @@ jobs:
       - name: Acceptance boundary
         if: success()
         run: |
-          echo "SCREENSHOTS GENERATED for $GITHUB_SHA"
+          echo "SCREENSHOTS GENERATED for exact branch SHA $EXACT_SHA"
           echo "This workflow does NOT declare VISUAL ACCEPTANCE PASS. Inspect the artifact before merge."
