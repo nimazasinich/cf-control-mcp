@@ -34,54 +34,159 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 // ---------------------------------------------------------------------------
-// run_code (Piston)
+// run_code (paiza.IO)
 // ---------------------------------------------------------------------------
 
-test("run_code: success path returns Piston's run result", async () => {
+function paizaDetails(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "session-1",
+    language: "python3",
+    status: "completed",
+    build_stdout: null,
+    build_stderr: null,
+    build_exit_code: 0,
+    build_result: null,
+    stdout: "2\n",
+    stderr: "",
+    exit_code: 0,
+    result: "success",
+    time: "0.01",
+    memory: 1024,
+    ...overrides,
+  };
+}
+
+test("run_code: paiza guest success returns the compatible run contract", async () => {
   const calls: { url: string; init: RequestInit }[] = [];
-  globalThis.fetch = (async (url: any, init: any) => {
+  globalThis.fetch = (async (url: any, init: any = {}) => {
     calls.push({ url: String(url), init });
-    return jsonResponse({ run: { stdout: "2\n", stderr: "", code: 0 } });
+    if (String(url).endsWith("/create.json")) return jsonResponse({ id: "session-1", status: "completed" });
+    if (String(url).includes("/get_details.json")) return jsonResponse(paizaDetails());
+    throw new Error(`unexpected fetch ${url}`);
   }) as any;
 
   const tool = findTool("run_code");
   const result: any = await tool.handler({ language: "python", code: "print(1+1)" }, mockEnv());
 
+  assert.equal(result.backend, "paiza.io");
+  assert.equal(result.language, "python3");
   assert.equal(result.run.stdout, "2\n");
+  assert.equal(result.run.stderr, "");
   assert.equal(result.run.code, 0);
-  assert.equal(calls.length, 1);
-  assert.match(calls[0].url, /emkc\.org\/api\/v2\/piston\/execute/);
-  const sentBody = JSON.parse(String(calls[0].init.body));
-  assert.equal(sentBody.language, "python");
-  assert.equal(sentBody.files[0].content, "print(1+1)");
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].url, /api\.paiza\.io\/runners\/create\.json$/);
+  const body = new URLSearchParams(String(calls[0].init.body));
+  assert.equal(body.get("language"), "python3");
+  assert.equal(body.get("source_code"), "print(1+1)");
+  assert.equal(body.get("api_key"), "guest");
 });
 
-test("run_code: non-zero exit code is passed through, not thrown", async () => {
-  globalThis.fetch = (async () => jsonResponse({ run: { stdout: "", stderr: "", code: 3 } })) as any;
+test("run_code: polls running sessions until completed", async () => {
+  const urls: string[] = [];
+  globalThis.fetch = (async (url: any) => {
+    urls.push(String(url));
+    if (String(url).endsWith("/create.json")) return jsonResponse({ id: 7, status: "running" });
+    if (String(url).includes("/get_status.json")) return jsonResponse({ id: 7, status: "completed" });
+    if (String(url).includes("/get_details.json")) return jsonResponse(paizaDetails({ id: 7 }));
+    throw new Error(`unexpected fetch ${url}`);
+  }) as any;
   const tool = findTool("run_code");
-  const result: any = await tool.handler({ language: "python", code: "import sys; sys.exit(3)" }, mockEnv());
-  assert.equal(result.run.code, 3);
+  const result: any = await tool.handler({ language: "python3", code: "print(2)" }, mockEnv());
+  assert.equal(result.run.code, 0);
+  assert.equal(urls.filter((u) => u.includes("get_status")).length, 1);
 });
 
-test("run_code: Piston HTTP error surfaces as a thrown Error with status", async () => {
-  globalThis.fetch = (async () => jsonResponse({ message: "bad language" }, 400)) as any;
+test("run_code: runtime non-zero exit is preserved", async () => {
+  globalThis.fetch = (async (url: any) => {
+    if (String(url).endsWith("/create.json")) return jsonResponse({ id: "x", status: "completed" });
+    return jsonResponse(paizaDetails({ stdout: "", stderr: "boom", exit_code: 3, result: "failure" }));
+  }) as any;
+  const tool = findTool("run_code");
+  const result: any = await tool.handler({ language: "python", code: "raise SystemExit(3)" }, mockEnv());
+  assert.equal(result.run.code, 3);
+  assert.equal(result.run.stderr, "boom");
+});
+
+test("run_code: build failure is surfaced through stderr and compatible non-zero code", async () => {
+  globalThis.fetch = (async (url: any) => {
+    if (String(url).endsWith("/create.json")) return jsonResponse({ id: "x", status: "completed" });
+    return jsonResponse(paizaDetails({
+      language: "c",
+      build_stderr: "syntax error",
+      build_exit_code: 1,
+      build_result: "failure",
+      stdout: null,
+      stderr: null,
+      exit_code: null,
+      result: "failure",
+    }));
+  }) as any;
+  const tool = findTool("run_code");
+  const result: any = await tool.handler({ language: "c", code: "not c" }, mockEnv());
+  assert.equal(result.run.code, 1);
+  assert.equal(result.run.stderr, "syntax error");
+  assert.equal(result.compile.stderr, "syntax error");
+  assert.equal(result.compile.code, 1);
+});
+
+test("run_code: stdin is forwarded to paiza input", async () => {
+  let createBody = "";
+  globalThis.fetch = (async (url: any, init: any = {}) => {
+    if (String(url).endsWith("/create.json")) {
+      createBody = String(init.body);
+      return jsonResponse({ id: "x", status: "completed" });
+    }
+    return jsonResponse(paizaDetails({ stdout: "hello\n" }));
+  }) as any;
+  const tool = findTool("run_code");
+  await tool.handler({ language: "python", code: "print(input())", stdin: "hello" }, mockEnv());
+  assert.equal(new URLSearchParams(createBody).get("input"), "hello");
+});
+
+test("run_code: explicit version selection fails closed", async () => {
   const tool = findTool("run_code");
   await assert.rejects(
-    () => tool.handler({ language: "not-a-real-lang", code: "x" }, mockEnv()),
-    /Piston API error \(400\)/,
+    () => tool.handler({ language: "python", version: "3.12", code: "pass" }, mockEnv()),
+    /manages runtime versions and cannot select version/,
   );
 });
 
-test("run_code: defaults version to '*' and args to []", async () => {
-  let sentBody: any = null;
-  globalThis.fetch = (async (_url: any, init: any) => {
-    sentBody = JSON.parse(String(init.body));
-    return jsonResponse({ run: { stdout: "", stderr: "", code: 0 } });
+test("run_code: CLI args fail closed instead of being silently dropped", async () => {
+  const tool = findTool("run_code");
+  await assert.rejects(
+    () => tool.handler({ language: "python", code: "pass", args: ["one"] }, mockEnv()),
+    /does not support CLI arguments/,
+  );
+});
+
+test("run_code: unknown language fails before upstream execution", async () => {
+  const tool = findTool("run_code");
+  await assert.rejects(
+    () => tool.handler({ language: "not-a-real-lang", code: "x" }, mockEnv()),
+    /does not support language/,
+  );
+});
+
+test("run_code: upstream HTTP error surfaces with stage and status", async () => {
+  globalThis.fetch = (async () => jsonResponse({ message: "unavailable" }, 503)) as any;
+  const tool = findTool("run_code");
+  await assert.rejects(() => tool.handler({ language: "python", code: "x" }, mockEnv()), /paiza\.IO API error \(503\) during create/);
+});
+
+test("run_code: paiza error field is treated as a failure", async () => {
+  globalThis.fetch = (async () => jsonResponse({ status: "running", error: "rate limited" })) as any;
+  const tool = findTool("run_code");
+  await assert.rejects(() => tool.handler({ language: "python", code: "x" }, mockEnv()), /paiza\.IO create error: rate limited/);
+});
+
+test("run_code: AbortError is surfaced as a labeled upstream timeout", async () => {
+  globalThis.fetch = (async () => {
+    const err = new Error("aborted");
+    err.name = "AbortError";
+    throw err;
   }) as any;
   const tool = findTool("run_code");
-  await tool.handler({ language: "python", code: "pass" }, mockEnv());
-  assert.equal(sentBody.version, "*");
-  assert.deepEqual(sentBody.args, []);
+  await assert.rejects(() => tool.handler({ language: "python", code: "x" }, mockEnv()), /paiza\.IO create timed out/);
 });
 
 test("run_code: validation — missing language throws", async () => {
@@ -103,37 +208,25 @@ test("run_code: validation — code over 200KB throws", async () => {
   );
 });
 
-test("run_code: timeout aborts and raises a labeled error", async () => {
-  globalThis.fetch = ((_url: any, init: any) =>
-    new Promise((_resolve, reject) => {
-      init.signal?.addEventListener("abort", () => {
-        const err = new Error("aborted");
-        err.name = "AbortError";
-        reject(err);
-      });
-    })) as any;
-  const tool = findTool("run_code");
-  await assert.rejects(
-    () => tool.handler({ language: "python", code: "while True: pass" }, mockEnv()),
-    /Piston execute timed out/,
-  );
-});
-
 // ---------------------------------------------------------------------------
-// list_code_runtimes (Piston)
+// list_code_runtimes (paiza.IO)
 // ---------------------------------------------------------------------------
 
-test("list_code_runtimes: returns the runtimes list on success", async () => {
-  globalThis.fetch = (async () => jsonResponse([{ language: "python", version: "3.12.0" }])) as any;
+test("list_code_runtimes: returns documented paiza language ids without an upstream call", async () => {
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    throw new Error("should not fetch");
+  }) as any;
   const tool = findTool("list_code_runtimes");
   const result: any = await tool.handler({}, mockEnv());
-  assert.equal(result[0].language, "python");
-});
-
-test("list_code_runtimes: HTTP error throws", async () => {
-  globalThis.fetch = (async () => new Response("", { status: 503 })) as any;
-  const tool = findTool("list_code_runtimes");
-  await assert.rejects(() => tool.handler({}, mockEnv()), /Piston API error \(503\)/);
+  assert.ok(Array.isArray(result));
+  assert.ok(result.some((row: any) => row.language === "python3"));
+  assert.ok(result.some((row: any) => row.language === "javascript"));
+  assert.ok(result.some((row: any) => row.language === "rust"));
+  assert.equal(result[0].backend, "paiza.io");
+  assert.equal(result[0].version_policy, "service-managed");
+  assert.equal(calls, 0);
 });
 
 // ---------------------------------------------------------------------------
