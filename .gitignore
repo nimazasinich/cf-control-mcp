@@ -7,3 +7,4 @@ node_modules/
 build-test/
 state/*.local.txt
 scripts/_gw_secret_setup.py
+admin-visual-artifacts/

@@ -8,6 +8,7 @@ on:
       - "src/admin/**"
       - "test/admin-*.test.ts"
       - "scripts/render_admin_visuals.cjs"
+      - "scripts/audit_admin_visuals.cjs"
       - ".github/workflows/admin-visual-acceptance.yml"
   pull_request:
     branches: [main]
@@ -15,6 +16,7 @@ on:
       - "src/admin/**"
       - "test/admin-*.test.ts"
       - "scripts/render_admin_visuals.cjs"
+      - "scripts/audit_admin_visuals.cjs"
       - ".github/workflows/admin-visual-acceptance.yml"
   workflow_dispatch:
 
@@ -95,7 +97,7 @@ jobs:
           ROOT="$PWD/admin-visual-artifacts"
           DASH="file://$ROOT/dashboard-fixture.html"
           LOGIN="file://$ROOT/login-fixture.html"
-          mkdir -p "$ROOT/screenshots" "$ROOT/dom"
+          mkdir -p "$ROOT/screenshots"
 
           capture() {
             local name="$1"
@@ -170,44 +172,42 @@ jobs:
         shell: bash
         env:
           CHROME: ${{ steps.chrome.outputs.binary }}
+          EXACT_SHA: ${{ env.EXACT_SHA }}
         run: |
           set -euo pipefail
-          ROOT="$PWD/admin-visual-artifacts"
-          DASH="file://$ROOT/dashboard-fixture.html"
+          node scripts/audit_admin_visuals.cjs admin-visual-artifacts
 
-          inspect_dom() {
-            local name="$1"
-            local url="$2"
-            local budget="${3:-3400}"
-            "$CHROME" \
-              --headless=new \
-              --no-sandbox \
-              --disable-gpu \
-              --disable-dev-shm-usage \
-              --allow-file-access-from-files \
-              --force-device-scale-factor=1 \
-              --window-size=1368,753 \
-              --virtual-time-budget="$budget" \
-              --dump-dom "$url" >"$ROOT/dom/$name.html" 2>"$ROOT/dom/$name.err"
-            grep -q 'data-visual-runtime="ok"' "$ROOT/dom/$name.html" || {
-              echo "Runtime audit did not settle cleanly for $name" >&2
-              cat "$ROOT/dom/$name.err" >&2 || true
-              exit 1
-            }
-            grep -q 'data-visual-overflow="ok"' "$ROOT/dom/$name.html" || {
-              echo "Viewport overflow audit failed for $name" >&2
-              exit 1
-            }
+      - name: Publish overflow audit report to job summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPORT="admin-visual-artifacts/overflow-audit-report.json"
+          if [ ! -f "$REPORT" ]; then
+            echo "overflow-audit-report.json was not produced (audit script likely crashed before writing it)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          node <<'NODE' >> "$GITHUB_STEP_SUMMARY"
+          const r = require('./admin-visual-artifacts/overflow-audit-report.json');
+          const lines = [];
+          lines.push(`### Admin Visual Acceptance — overflow audit (${r.exactSha || 'unknown sha'})`);
+          lines.push('');
+          lines.push(`${r.totalPages - r.failedPages.length}/${r.totalPages} pages passed at ${r.viewport.width}x${r.viewport.height}`);
+          lines.push('');
+          lines.push('| page | result | runtime | overflow | overflow px (page) | overflow px (doc) | waited ms |');
+          lines.push('|---|---|---|---|---|---|---|');
+          for (const p of r.results) {
+            const d = p.diagnostics;
+            const pagePx = d && d.activePageMeasurement ? `${d.activePageMeasurement.overflowXpx}x${d.activePageMeasurement.overflowYpx}` : 'n/a';
+            const docPx = d ? `${d.documentMeasurement.overflowXpx}x${d.documentMeasurement.overflowYpx}` : 'n/a';
+            lines.push(`| ${p.name} | ${p.pass ? '✅' : '❌'} | ${d ? d.runtimeStatus : 'n/a'} | ${d ? d.overflowStatus : 'n/a'} | ${pagePx} | ${docPx} | ${p.waitedMs} |`);
           }
-
-          for page in overview providers models routing mcp-tools health usage audit; do
-            hash="$page"
-            [ "$page" = "audit" ] && hash="logs"
-            inspect_dom "$page" "$DASH?visualState=normal#$hash"
-          done
-          for view in environment security session boundary; do
-            inspect_dom "settings-$view" "$DASH?visualState=normal&settingsView=$view#settings"
-          done
+          if (r.failedPages.length) {
+            lines.push('');
+            lines.push(`**Failed:** ${r.failedPages.join(', ')}`);
+          }
+          console.log(lines.join('\n'));
+          NODE
 
       - name: Upload screenshot evidence
         if: always()
