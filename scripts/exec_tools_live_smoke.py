@@ -3,7 +3,7 @@
 
 Runs through the deployed Worker's /mcp endpoint using MCP_AUTH_TOKEN. This
 intentionally exercises the real auth + JSON-RPC layer and the real upstreams:
-Piston for run_code/list_code_runtimes and GitHub Actions for gh_run_code/
+Wandbox for run_code/list_code_runtimes and GitHub Actions for gh_run_code/
 gh_get_run_result.
 
 No secret values are printed. Any unmet assertion exits non-zero so deploy
@@ -120,7 +120,7 @@ def tool_result(
 
 def require_run(payload: Any, label: str) -> dict[str, Any]:
     if not isinstance(payload, dict) or not isinstance(payload.get("run"), dict):
-        fail(f"{label}: expected Piston result.run object")
+        fail(f"{label}: expected Wandbox-compatible result.run object")
     return payload["run"]
 
 
@@ -185,7 +185,7 @@ def main() -> int:
         isinstance(row, dict) and row.get("language") == "python" for row in runtimes
     ):
         fail("list_code_runtimes: no Python runtime returned by live Piston API")
-    print(f"PASS: list_code_runtimes live Piston lookup ({len(runtimes)} runtimes)")
+    print(f"PASS: list_code_runtimes live Wandbox lookup ({len(runtimes)} runtimes)")
 
     # Verify the GitHub Actions execution round-trip before Piston execute so a
     # Piston-specific upstream failure cannot hide independent GitHub evidence.
@@ -195,12 +195,12 @@ def main() -> int:
     success_payload, _ = tool_result(
         102,
         "run_code",
-        {"language": "python", "code": 'print("PISTON_MCP_EXEC_OK")'},
+        {"language": "python", "code": 'print("WANDBOX_MCP_EXEC_OK")'},
     )
     success_run = require_run(success_payload, "run_code success")
-    if success_run.get("code") != 0 or "PISTON_MCP_EXEC_OK" not in str(success_run.get("stdout", "")):
+    if success_run.get("code") != 0 or "WANDBOX_MCP_EXEC_OK" not in str(success_run.get("stdout", "")):
         fail(
-            "run_code success: expected exit 0 and PISTON_MCP_EXEC_OK in stdout; "
+            "run_code success: expected exit 0 and WANDBOX_MCP_EXEC_OK in stdout; "
             f"got code={success_run.get('code')} stdout={str(success_run.get('stdout', ''))[:200]!r}"
         )
     print("PASS: run_code live Piston success path")

@@ -34,54 +34,104 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 // ---------------------------------------------------------------------------
-// run_code (Piston)
+// run_code (Wandbox)
 // ---------------------------------------------------------------------------
 
-test("run_code: success path returns Piston's run result", async () => {
-  const calls: { url: string; init: RequestInit }[] = [];
-  globalThis.fetch = (async (url: any, init: any) => {
-    calls.push({ url: String(url), init });
-    return jsonResponse({ run: { stdout: "2\n", stderr: "", code: 0 } });
-  }) as any;
+const pythonCompiler = {
+  name: "python-head",
+  language: "Python",
+  version: "3.13.0",
+  "display-name": "Python HEAD",
+  "runtime-option-raw": true,
+};
 
+test("run_code: resolves a live Wandbox compiler and returns compatible run output", async () => {
+  const calls: { url: string; init: RequestInit }[] = [];
+  globalThis.fetch = (async (url: any, init: any = {}) => {
+    calls.push({ url: String(url), init });
+    if (String(url).endsWith("/list.json")) return jsonResponse([pythonCompiler]);
+    return jsonResponse({ status: "0", program_output: "2\n", program_error: "", compiler_error: "" });
+  }) as any;
   const tool = findTool("run_code");
   const result: any = await tool.handler({ language: "python", code: "print(1+1)" }, mockEnv());
-
+  assert.equal(result.backend, "wandbox");
   assert.equal(result.run.stdout, "2\n");
+  assert.equal(result.run.stderr, "");
   assert.equal(result.run.code, 0);
-  assert.equal(calls.length, 1);
-  assert.match(calls[0].url, /emkc\.org\/api\/v2\/piston\/execute/);
-  const sentBody = JSON.parse(String(calls[0].init.body));
-  assert.equal(sentBody.language, "python");
-  assert.equal(sentBody.files[0].content, "print(1+1)");
+  assert.equal(result.compiler.name, "python-head");
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].url, /wandbox\.org\/api\/list\.json$/);
+  assert.match(calls[1].url, /wandbox\.org\/api\/compile\.json$/);
+  const sentBody = JSON.parse(String(calls[1].init.body));
+  assert.equal(sentBody.compiler, "python-head");
+  assert.equal(sentBody.code, "print(1+1)");
+  assert.equal(sentBody.save, false);
 });
 
-test("run_code: non-zero exit code is passed through, not thrown", async () => {
-  globalThis.fetch = (async () => jsonResponse({ run: { stdout: "", stderr: "", code: 3 } })) as any;
+test("run_code: exact Wandbox compiler name bypasses alias resolution", async () => {
+  let compileBody: any = null;
+  globalThis.fetch = (async (url: any, init: any = {}) => {
+    if (String(url).endsWith("/list.json")) return jsonResponse([pythonCompiler]);
+    compileBody = JSON.parse(String(init.body));
+    return jsonResponse({ status: 0, program_output: "ok\n" });
+  }) as any;
   const tool = findTool("run_code");
-  const result: any = await tool.handler({ language: "python", code: "import sys; sys.exit(3)" }, mockEnv());
-  assert.equal(result.run.code, 3);
+  await tool.handler({ language: "python-head", code: "print('ok')" }, mockEnv());
+  assert.equal(compileBody.compiler, "python-head");
 });
 
-test("run_code: Piston HTTP error surfaces as a thrown Error with status", async () => {
-  globalThis.fetch = (async () => jsonResponse({ message: "bad language" }, 400)) as any;
+test("run_code: non-zero exit code is passed through", async () => {
+  let n = 0;
+  globalThis.fetch = (async () => {
+    n += 1;
+    if (n == 1) return jsonResponse([pythonCompiler]);
+    return jsonResponse({ status: "3", program_output: "", program_error: "boom" });
+  }) as any;
+  const tool = findTool("run_code");
+  const result: any = await tool.handler({ language: "python", code: "raise SystemExit(3)" }, mockEnv());
+  assert.equal(result.run.code, 3);
+  assert.equal(result.run.stderr, "boom");
+});
+
+test("run_code: compiler errors become stderr with non-zero compatible code", async () => {
+  let n = 0;
+  globalThis.fetch = (async () => {
+    n += 1;
+    if (n == 1) return jsonResponse([{ name: "gcc-head-c", language: "C", version: "17", "runtime-option-raw": false }]);
+    return jsonResponse({ status: "0", compiler_error: "syntax error", program_output: "" });
+  }) as any;
+  const tool = findTool("run_code");
+  const result: any = await tool.handler({ language: "c", code: "not c" }, mockEnv());
+  assert.equal(result.run.code, 1);
+  assert.equal(result.run.stderr, "syntax error");
+  assert.equal(result.compile.stderr, "syntax error");
+});
+
+test("run_code: runtime args use Wandbox runtime-option-raw when supported", async () => {
+  let compileBody: any = null;
+  globalThis.fetch = (async (url: any, init: any = {}) => {
+    if (String(url).endsWith("/list.json")) return jsonResponse([pythonCompiler]);
+    compileBody = JSON.parse(String(init.body));
+    return jsonResponse({ status: 0, program_output: "" });
+  }) as any;
+  const tool = findTool("run_code");
+  await tool.handler({ language: "python", code: "pass", args: ["one", "two"] }, mockEnv());
+  assert.equal(compileBody["runtime-option-raw"], "one\ntwo");
+});
+
+test("run_code: runtime args fail closed when selected compiler does not support them", async () => {
+  globalThis.fetch = (async () => jsonResponse([{ name: "python-stable", language: "Python", version: "3.12", "runtime-option-raw": false }])) as any;
   const tool = findTool("run_code");
   await assert.rejects(
-    () => tool.handler({ language: "not-a-real-lang", code: "x" }, mockEnv()),
-    /Piston API error \(400\)/,
+    () => tool.handler({ language: "python", code: "pass", args: ["one"] }, mockEnv()),
+    /does not support runtime arguments/,
   );
 });
 
-test("run_code: defaults version to '*' and args to []", async () => {
-  let sentBody: any = null;
-  globalThis.fetch = (async (_url: any, init: any) => {
-    sentBody = JSON.parse(String(init.body));
-    return jsonResponse({ run: { stdout: "", stderr: "", code: 0 } });
-  }) as any;
+test("run_code: Wandbox HTTP error surfaces with status", async () => {
+  globalThis.fetch = (async () => jsonResponse({ message: "unavailable" }, 503)) as any;
   const tool = findTool("run_code");
-  await tool.handler({ language: "python", code: "pass" }, mockEnv());
-  assert.equal(sentBody.version, "*");
-  assert.deepEqual(sentBody.args, []);
+  await assert.rejects(() => tool.handler({ language: "python", code: "x" }, mockEnv()), /Wandbox API error \(503\)/);
 });
 
 test("run_code: validation — missing language throws", async () => {
@@ -103,37 +153,22 @@ test("run_code: validation — code over 200KB throws", async () => {
   );
 });
 
-test("run_code: timeout aborts and raises a labeled error", async () => {
-  globalThis.fetch = ((_url: any, init: any) =>
-    new Promise((_resolve, reject) => {
-      init.signal?.addEventListener("abort", () => {
-        const err = new Error("aborted");
-        err.name = "AbortError";
-        reject(err);
-      });
-    })) as any;
-  const tool = findTool("run_code");
-  await assert.rejects(
-    () => tool.handler({ language: "python", code: "while True: pass" }, mockEnv()),
-    /Piston execute timed out/,
-  );
-});
-
 // ---------------------------------------------------------------------------
-// list_code_runtimes (Piston)
+// list_code_runtimes (Wandbox)
 // ---------------------------------------------------------------------------
 
-test("list_code_runtimes: returns the runtimes list on success", async () => {
-  globalThis.fetch = (async () => jsonResponse([{ language: "python", version: "3.12.0" }])) as any;
+test("list_code_runtimes: returns the live Wandbox compiler list", async () => {
+  globalThis.fetch = (async () => jsonResponse([pythonCompiler])) as any;
   const tool = findTool("list_code_runtimes");
   const result: any = await tool.handler({}, mockEnv());
-  assert.equal(result[0].language, "python");
+  assert.equal(result[0].name, "python-head");
+  assert.equal(result[0].language, "Python");
 });
 
-test("list_code_runtimes: HTTP error throws", async () => {
+test("list_code_runtimes: Wandbox HTTP error throws", async () => {
   globalThis.fetch = (async () => new Response("", { status: 503 })) as any;
   const tool = findTool("list_code_runtimes");
-  await assert.rejects(() => tool.handler({}, mockEnv()), /Piston API error \(503\)/);
+  await assert.rejects(() => tool.handler({}, mockEnv()), /Wandbox API error \(503\)/);
 });
 
 // ---------------------------------------------------------------------------

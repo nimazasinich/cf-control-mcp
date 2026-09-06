@@ -20,6 +20,7 @@
  */
 
 import { internetTools } from "./internet/tools";
+import { wandboxExecute, wandboxRuntimes } from "./code-execution/wandbox";
 
 export interface Env {
 	MCP_AUTH_TOKEN: string;
@@ -254,12 +255,12 @@ function base64EncodeUtf8(text: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Sandbox code execution (Piston, emkc.org) — free, no API key required.
+// Sandbox code execution (Wandbox) — public API, no API key required.
 // ---------------------------------------------------------------------------
 
 /**
  * fetch() with a hard wall-clock timeout. Without this, a hung upstream
- * (Piston or GitHub) can hold a Worker request open indefinitely — Workers
+ * (Wandbox or GitHub) can hold a Worker request open indefinitely — Workers
  * bill/limit on wall time, so a stuck outbound call is a real availability
  * bug, not just a slow response. Throws a labeled error naming the call site
  * on timeout so it's distinguishable from a normal network/HTTP failure.
@@ -279,51 +280,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 	}
 }
 
-const PISTON_TIMEOUT_MS = 25_000;
 const GITHUB_TIMEOUT_MS = 20_000;
-
-/** Executes a snippet via the public Piston API. Ephemeral, stateless, no secrets involved. */
-async function pistonExecute(
-	language: string,
-	version: string,
-	code: string,
-	stdin: string,
-	args: string[],
-): Promise<any> {
-	const res = await fetchWithTimeout(
-		"https://emkc.org/api/v2/piston/execute",
-		{
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				language,
-				version: version || "*",
-				files: [{ content: code }],
-				stdin: stdin || "",
-				args: args || [],
-			}),
-		},
-		PISTON_TIMEOUT_MS,
-		"Piston execute",
-	);
-	const contentType = res.headers.get("content-type") ?? "";
-	const body = contentType.includes("application/json") ? await res.json() : await res.text();
-	if (!res.ok) {
-		throw new Error(`Piston API error (${res.status}): ${typeof body === "string" ? body : JSON.stringify(body)}`);
-	}
-	return body;
-}
-
-async function pistonRuntimes(): Promise<any> {
-	const res = await fetchWithTimeout(
-		"https://emkc.org/api/v2/piston/runtimes",
-		{},
-		PISTON_TIMEOUT_MS,
-		"Piston list runtimes",
-	);
-	if (!res.ok) throw new Error(`Piston API error (${res.status}) listing runtimes`);
-	return await res.json();
-}
 
 // ---------------------------------------------------------------------------
 // NOTE: Generic outbound internet access (web_fetch), keyless web search
@@ -1073,15 +1030,14 @@ export const tools: ToolDef[] = [
 	{
 		name: "run_code",
 		description:
-			"Execute a short code snippet for free in an ephemeral public sandbox (Piston, emkc.org) and return " +
-			"stdout, stderr, and exit code. Supports common languages (python, javascript/node, typescript, bash, " +
-			"go, rust, java, c, cpp, etc — call list_code_runtimes for the exact catalog). No account or credentials " +
-			"involved, no persistent state, and nothing here touches the Cloudflare/HF accounts. Not suitable for " +
-			"secrets or private data: the sandbox is a shared free third-party service.",
+			"Execute a short code snippet in the public Wandbox sandbox and return stdout, stderr, and exit code. " +
+			"Supports common languages (python, javascript/node, typescript, bash, go, rust, java, c, cpp, etc — " +
+			"call list_code_runtimes for the live compiler catalog). No account or API key is required. The sandbox is " +
+			"a shared third-party service with no SLA, so do not send secrets or private data.",
 		inputSchema: {
 			type: "object",
 			properties: {
-				language: { type: "string", description: "Piston language id, e.g. 'python', 'javascript', 'bash', 'go'" },
+				language: { type: "string", description: "Wandbox language alias or exact compiler name, e.g. 'python', 'javascript', 'bash', 'go'" },
 				version: { type: "string", description: "Language version, or '*' for latest. Default '*'." },
 				code: { type: "string", description: "Source code to run" },
 				stdin: { type: "string", description: "Optional stdin to feed the program" },
@@ -1099,21 +1055,21 @@ export const tools: ToolDef[] = [
 			const version = String(args.version ?? "*");
 			const stdin = String(args.stdin ?? "");
 			const cliArgs = Array.isArray(args.args) ? args.args.map((a) => String(a)).slice(0, 32) : [];
-			return await pistonExecute(language, version, code, stdin, cliArgs);
+			return await wandboxExecute(language, version, code, stdin, cliArgs);
 		},
 	},
 	{
 		name: "list_code_runtimes",
-		description: "List the languages/versions currently available in the free Piston sandbox used by run_code.",
+		description: "List the live compiler/language catalog currently available from Wandbox for run_code.",
 		inputSchema: { type: "object", properties: {} },
 		annotations: { readOnlyHint: true, openWorldHint: true },
-		handler: async () => await pistonRuntimes(),
+		handler: async () => await wandboxRuntimes(),
 	},
 	{
 		name: "gh_run_code",
 		description:
 			"Run code for real in an ephemeral, full Ubuntu VM with genuine internet access, via a GitHub Actions " +
-			"workflow (.github/workflows/mcp-exec.yml) dispatched on this repo. Unlike run_code (Piston), this can " +
+			"workflow (.github/workflows/mcp-exec.yml) dispatched on this repo. Unlike run_code (Wandbox), this can " +
 			"install packages (apt/pip/npm/etc via 'setup'), make real outbound network calls, and run for up to " +
 			"10 minutes. It's asynchronous: this only starts the run and returns a run_key. Call gh_get_run_result " +
 			"with that run_key afterward (poll every few seconds) to get status and logs. Requires GITHUB_PAT to be " +
