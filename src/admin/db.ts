@@ -27,10 +27,46 @@ export async function getProvider(env: AdminEnv, id: string): Promise<ProviderRo
 	return env.DM_DB.prepare("SELECT * FROM providers WHERE id = ?").bind(id).first<ProviderRow>();
 }
 
-export async function setProviderEnabled(env: AdminEnv, id: string, enabled: boolean): Promise<void> {
+export async function getModel(env: AdminEnv, id: string): Promise<ModelRow | null> {
+	return env.DM_DB.prepare("SELECT * FROM models WHERE id = ?").bind(id).first<ModelRow>();
+}
+
+/**
+ * Update provider enablement and verify the persisted value.
+ * Returns null for an unknown provider instead of silently succeeding.
+ */
+export async function setProviderEnabled(env: AdminEnv, id: string, enabled: boolean): Promise<ProviderRow | null> {
+	const existing = await getProvider(env, id);
+	if (!existing) return null;
+
 	await env.DM_DB.prepare("UPDATE providers SET enabled = ?, updated_at = datetime('now') WHERE id = ?")
 		.bind(enabled ? 1 : 0, id)
 		.run();
+
+	const updated = await getProvider(env, id);
+	if (!updated || updated.enabled !== (enabled ? 1 : 0)) {
+		throw new Error("provider_update_not_persisted");
+	}
+	return updated;
+}
+
+/**
+ * Update model enablement and verify the persisted value.
+ * D1 models.enabled is runtime-authoritative for /v1/models and completions.
+ */
+export async function setModelEnabled(env: AdminEnv, id: string, enabled: boolean): Promise<ModelRow | null> {
+	const existing = await getModel(env, id);
+	if (!existing) return null;
+
+	await env.DM_DB.prepare("UPDATE models SET enabled = ? WHERE id = ?")
+		.bind(enabled ? 1 : 0, id)
+		.run();
+
+	const updated = await getModel(env, id);
+	if (!updated || updated.enabled !== (enabled ? 1 : 0)) {
+		throw new Error("model_update_not_persisted");
+	}
+	return updated;
 }
 
 export async function setProviderAlias(env: AdminEnv, id: string, alias: string | null): Promise<void> {
