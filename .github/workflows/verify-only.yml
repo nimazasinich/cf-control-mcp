@@ -11,11 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Test /mcp with real token
+      - name: Run verification checks
         run: |
           {
+            echo "=== 1. MCP real-token verification ==="
             echo "MCP_AUTH_TOKEN set: $([ -n "$MCP_AUTH_TOKEN" ] && echo yes || echo no)"
             echo "CLOUDFLARE_API_TOKEN set: $([ -n "$CLOUDFLARE_API_TOKEN" ] && echo yes || echo no)"
+            echo "GATEWAY_AUTH_TOKEN set: $([ -n "$GATEWAY_AUTH_TOKEN" ] && echo yes || echo no)"
             echo "token length: ${#MCP_AUTH_TOKEN}"
             curl -s -X POST https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp \
               -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
@@ -34,11 +36,16 @@ jobs:
               -H "Content-Type: application/json" \
               -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"cf_list_workers","arguments":{}}}'
             echo
+
+            echo "=== 2. Provider Gateway, D1 Readback, AI Gateway, BYOK verification ==="
+            python3 scripts/verify_production.py
           } > verify.log 2>&1
           cat verify.log
         env:
           MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
       - name: Commit result
         run: |
           git config user.email "actions@github.com"
