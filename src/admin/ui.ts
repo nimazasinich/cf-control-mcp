@@ -11,7 +11,8 @@ import { applyRoutingFidelity } from "./ui/routing-fidelity";
 import { applySettingsFidelity } from "./ui/settings-fidelity";
 import { applyToolsFidelity } from "./ui/tools-fidelity";
 import { applyUsageFidelity } from "./ui/usage-fidelity";
+import { applyVisualAcceptanceFixes } from "./ui/visual-acceptance-fixes";
 
 export function dashboardHtml(): string {
-	return applyFidelityIntegrity(applyOverviewFidelity(applyToolsFidelity(applyRoutingFidelity(applyUsageFidelity(applySettingsFidelity(applyAuditFidelity(applyHealthFidelity(applyLoadingFidelity(applyProvidersFidelity(applyModelsFidelity(baseDashboardHtml())))))))))));
+	return applyVisualAcceptanceFixes(applyFidelityIntegrity(applyOverviewFidelity(applyToolsFidelity(applyRoutingFidelity(applyUsageFidelity(applySettingsFidelity(applyAuditFidelity(applyHealthFidelity(applyLoadingFidelity(applyProvidersFidelity(applyModelsFidelity(baseDashboardHtml()))))))))))));
 }
