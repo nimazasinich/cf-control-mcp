@@ -37,6 +37,18 @@ async function readJsonObject(request: Request): Promise<Record<string, unknown>
 	}
 }
 
+export interface AdminToolCatalogEntry {
+	name: string;
+	description: string;
+	inputSchema: Record<string, unknown>;
+	annotations?: {
+		readOnlyHint?: boolean;
+		destructiveHint?: boolean;
+		idempotentHint?: boolean;
+		openWorldHint?: boolean;
+	};
+}
+
 type RoutingState = "ACTIVE" | "MODEL_DISABLED" | "PROVIDER_DISABLED" | "BROKEN";
 
 function routingState(
@@ -57,7 +69,11 @@ function aliasesForModel(rules: RoutingRuleRow[], modelId: string): string[] {
 	return rules.filter((r) => r.model_id === modelId).map((r) => r.public_alias).sort();
 }
 
-export async function handleAdmin(request: Request, env: AdminEnv): Promise<Response> {
+export async function handleAdmin(
+	request: Request,
+	env: AdminEnv,
+	toolCatalog: readonly AdminToolCatalogEntry[] = [],
+): Promise<Response> {
 	const url = new URL(request.url);
 	const path = url.pathname;
 
@@ -183,6 +199,27 @@ export async function handleAdmin(request: Request, env: AdminEnv): Promise<Resp
 		return json({
 			totalAuditEvents: logs.length,
 			recentActions: logs.slice(0, 10).map((l: any) => ({ action: l.action, at: l.at })),
+		});
+	}
+
+	if (path === "/admin/api/tools" && request.method === "GET") {
+		const catalog = toolCatalog.map((tool) => ({
+			name: tool.name,
+			description: tool.description,
+			inputSchema: tool.inputSchema,
+			annotations: {
+				readOnlyHint: tool.annotations?.readOnlyHint === true,
+				destructiveHint: tool.annotations?.destructiveHint === true,
+				idempotentHint: tool.annotations?.idempotentHint === true,
+				openWorldHint: tool.annotations?.openWorldHint === true,
+			},
+		}));
+		return json({
+			count: catalog.length,
+			readOnlyCount: catalog.filter((tool) => tool.annotations.readOnlyHint).length,
+			destructiveCount: catalog.filter((tool) => tool.annotations.destructiveHint).length,
+			openWorldCount: catalog.filter((tool) => tool.annotations.openWorldHint).length,
+			tools: catalog,
 		});
 	}
 
