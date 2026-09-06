@@ -16,7 +16,7 @@ export function loginPageHtml(error?: string): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DreamWorker — Admin sign in</title>
+<title>cf-control-mcp — Admin · DreamWorker MCP Control Plane</title>
 <style>
 :root{--ink:#07123f;--muted:#6075b0;--muted2:#8193c1;--line:#d9e5f3;--line2:#cbd9ee;--blue:#2b79ef;--cyan:#25bfe7;--mint:#3bd1b8;--green:#12b97a;--danger:#db4b61}
 *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;color:var(--ink);background:#eaf2f8}body{overflow:hidden}button,input{font:inherit}
