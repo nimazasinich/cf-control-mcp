@@ -1,0 +1,41 @@
+name: Probe paiza adapter live
+
+on:
+  push:
+    branches:
+      - feat/paiza-code-runner
+    paths:
+      - .github/workflows/_probe-paiza-adapter.yml
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/paiza-code-runner
+      - run: npm ci
+      - run: npm run build:test
+      - name: Execute live paiza adapter
+        run: |
+          node <<'NODE'
+          const { paizaRuntimes, paizaExecute } = require('./build-test/src/code-execution/paiza.js');
+          (async () => {
+            const runtimes = paizaRuntimes();
+            if (!Array.isArray(runtimes) || !runtimes.some(r => r.language === 'python3')) {
+              throw new Error('paiza runtime catalog missing python3');
+            }
+
+            const ok = await paizaExecute('python', '*', 'print("PAIZA_ADAPTER_OK")', '', []);
+            if (!ok?.run || ok.backend !== 'paiza.io' || ok.run.code !== 0 || !String(ok.run.stdout).includes('PAIZA_ADAPTER_OK')) {
+              throw new Error(`unexpected success result: ${JSON.stringify(ok)}`);
+            }
+            console.log(`PASS: paiza adapter success; language=${ok.language}; result=${ok.execution?.result}`);
+
+            const failed = await paizaExecute('python', '*', 'import sys\nprint("EXPECTED_ERR", file=sys.stderr)\nsys.exit(3)', '', []);
+            if (!failed?.run || failed.run.code !== 3 || !String(failed.run.stderr).includes('EXPECTED_ERR')) {
+              throw new Error(`unexpected non-zero result: ${JSON.stringify(failed)}`);
+            }
+            console.log('PASS: paiza adapter preserves stderr and exit_code=3');
+          })().catch((err) => { console.error(err); process.exit(1); });
+          NODE
