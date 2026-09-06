@@ -29,4 +29,37 @@ jobs:
         run: npm run test:internet
 
       - name: Validate Python verification and bridge scripts
-        run: python3 -m py_compile scripts/oauth_smoke.py scripts/apex_cf_bridge.py
+        run: >-
+          python3 -m py_compile
+          scripts/oauth_smoke.py
+          scripts/verify_production.py
+          scripts/install_runtime_secrets.py
+          scripts/credential_audit.py
+          scripts/apex_cf_bridge.py
+
+      - name: Audit production credentials (redacted, non-gating)
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
+        env:
+          CF_AIG_AUTHORIZATION: ${{ secrets.CF_AIG_AUTHORIZATION }}
+          CF_AIG_TOKEN: ${{ secrets.CF_AIG_TOKEN }}
+          CF_TOKEN5: ${{ secrets.CF_TOKEN5 }}
+          APEX_CLOUDFLARE_DEPLOY_TOKEN: ${{ secrets.APEX_CLOUDFLARE_DEPLOY_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
+          PROVIDER_GATEWAY_AUTH_TOKEN: ${{ secrets.PROVIDER_GATEWAY_AUTH_TOKEN }}
+          GH_RUNNER_PAT: ${{ secrets.GH_RUNNER_PAT }}
+          GITHUB_RUNNER_PAT: ${{ secrets.GITHUB_RUNNER_PAT }}
+          GH_RUNNER_REPO: ${{ secrets.GH_RUNNER_REPO }}
+          GITHUB_RUNNER_REPO: ${{ secrets.GITHUB_RUNNER_REPO }}
+          HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
+          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+          PROBE_ACCOUNT_ID2: ${{ secrets.PROBE_ACCOUNT_ID2 }}
+          PROBE_TOKEN_F: ${{ secrets.PROBE_TOKEN_F }}
+          PROBE_TOKEN_G: ${{ secrets.PROBE_TOKEN_G }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_TEAM_TOKEN: ${{ secrets.VERCEL_TEAM_TOKEN }}
+        run: |
+          python3 scripts/credential_audit.py
+          cat credential-audit.md >> "$GITHUB_STEP_SUMMARY"

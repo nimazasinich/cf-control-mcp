@@ -11,42 +11,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run verification checks
-        run: |
-          {
-            echo "=== 1. MCP real-token verification ==="
-            echo "MCP_AUTH_TOKEN set: $([ -n "$MCP_AUTH_TOKEN" ] && echo yes || echo no)"
-            echo "CLOUDFLARE_API_TOKEN set: $([ -n "$CLOUDFLARE_API_TOKEN" ] && echo yes || echo no)"
-            echo "GATEWAY_AUTH_TOKEN set: $([ -n "$GATEWAY_AUTH_TOKEN" ] && echo yes || echo no)"
-            echo "token length: ${#MCP_AUTH_TOKEN}"
-            curl -s -X POST https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp \
-              -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-            echo
-            echo "-- tools/call cf_list_zones --"
-            curl -s -X POST https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp \
-              -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"cf_list_zones","arguments":{}}}'
-            echo
-            echo "-- tools/call cf_list_workers --"
-            curl -s -X POST https://cf-control-mcp.amin-chinisaz-edu.workers.dev/mcp \
-              -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"cf_list_workers","arguments":{}}}'
-            echo
 
-            echo "=== 2. Provider Gateway, D1 Readback, AI Gateway, BYOK verification ==="
-            python3 scripts/verify_production.py
-          } > verify.log 2>&1
-          cat verify.log
+      - name: Validate required verification secrets
+        shell: bash
         env:
           MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
-      - name: Commit result
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in MCP_AUTH_TOKEN CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID GATEWAY_AUTH_TOKEN; do
+            if [ -z "${!name:-}" ]; then
+              echo "MISSING_REQUIRED_SECRET: $name"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          echo "PASS: all required verification secrets are configured"
+
+      - name: Run live OAuth/MCP and production acceptance
+        shell: bash
+        env:
+          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
+          HF_LIVE_CHECK: ${{ secrets.HUGGINGFACE_TOKEN != '' && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          exec > >(tee verify.log) 2>&1
+          echo "=== OAuth + MCP protocol acceptance ==="
+          MCP_BASE_URL="https://cf-control-mcp.amin-chinisaz-edu.workers.dev" python3 scripts/oauth_smoke.py
+          echo "=== Provider Gateway + D1 + AI Gateway + BYOK acceptance ==="
+          python3 scripts/verify_production.py
+
+      - name: Commit verification log
+        if: always()
         run: |
           git config user.email "actions@github.com"
           git config user.name "verify-bot"
