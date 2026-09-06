@@ -12,6 +12,7 @@ export interface AdminEnv {
 	CLOUDFLARE_ACCOUNT_ID?: string;
 	CF_AIG_GATEWAY_SLUG?: string;
 	GATEWAY_AUTH_TOKEN?: string;
+	CF_AIG_TOKEN?: string;
 }
 
 export type HealthState =
@@ -21,6 +22,8 @@ export type HealthState =
 	| "RATE_LIMITED"
 	| "DISABLED"
 	| "NOT_CONFIGURED"
+	| "CONFIGURED"
+	| "REVOKED"
 	| "UPSTREAM_ERROR";
 
 export interface ProviderRow {

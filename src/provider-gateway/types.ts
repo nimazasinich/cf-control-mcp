@@ -33,10 +33,7 @@ export interface GatewayEnv {
 	 * never forwarded to Google.
 	 */
 	CF_AIG_TOKEN?: string;
-	/**
-	 * Optional Cloudflare account API token fallback for cf-aig-authorization.
-	 */
-	CLOUDFLARE_API_TOKEN?: string;
+
 	/**
 	 * Legacy escape hatch only: explicitly opt in ("true") to let the Worker
 	 * call Google AI Studio directly with a locally-held key, bypassing AI

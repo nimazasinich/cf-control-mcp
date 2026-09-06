@@ -37,9 +37,9 @@ const GOOGLE_AI_STUDIO_PREFIX = "google-ai-studio";
 // ---------------------------------------------------------------------------
 
 const DEFAULT_ALIASES: Record<string, string> = {
-	fast: "gemini-2.5-flash",
-	coding: "gemini-2.0-flash",
-	research: "gemini-2.5-pro",
+	fast: "gemini-3.6-flash",
+	coding: "gemini-3.8-flash",
+	research: "gemini-3.8-flash",
 };
 
 /**
@@ -138,13 +138,10 @@ async function forwardViaGateway(
 	// on the request always wins over a stored BYOK key — omitting it is
 	// what allows the gateway's own stored Google AI Studio credential
 	// (Secrets Store, `default` alias) to be used server-side.
-	const aigToken = env.CF_AIG_TOKEN?.trim() || env.CLOUDFLARE_API_TOKEN?.trim();
-	if (aigToken) {
-		// Only needed if this gateway is configured as an "authenticated
-		// gateway" in Cloudflare. This authenticates Worker → AI Gateway; it
-		// is a Cloudflare-side token, not the Google provider credential.
-		headers["cf-aig-authorization"] = `Bearer ${aigToken}`;
-	}
+	
+	// Authenticate Worker → AI Gateway. This is a Cloudflare-side token,
+	// not the Google provider credential.
+	headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN!.trim()}`;
 
 	const resolvedModel = await resolveModel(body.model, env);
 
@@ -212,6 +209,13 @@ export async function handleChatCompletions(request: Request, env: GatewayEnv): 
 		return gatewayError(
 			"Provider gateway is not configured. Set CF_AIG_GATEWAY_SLUG (and CLOUDFLARE_ACCOUNT_ID) so the Worker can reach Cloudflare AI Gateway, and store the Google AI Studio credential there via BYOK. " +
 			"(Legacy direct mode requires ALLOW_DIRECT_PROVIDER_KEY=true and a GOOGLE_AI_STUDIO_KEY secret, and is discouraged.)",
+			"configuration_error",
+			503,
+		);
+	}
+	if (gatewayConfigured && !env.CF_AIG_TOKEN?.trim()) {
+		return gatewayError(
+			"CONFIG_ERROR: CF_AIG_TOKEN runtime token not configured for authenticated AI Gateway",
 			"configuration_error",
 			503,
 		);

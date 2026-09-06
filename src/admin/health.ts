@@ -15,8 +15,8 @@ export interface HealthResult {
 }
 
 export async function testGoogleAiStudio(env: AdminEnv): Promise<HealthResult> {
-	if (!env.CLOUDFLARE_ACCOUNT_ID || !env.CF_AIG_GATEWAY_SLUG) {
-		return { state: "NOT_CONFIGURED", latencyMs: null, errorMessage: "CLOUDFLARE_ACCOUNT_ID or CF_AIG_GATEWAY_SLUG not set" };
+	if (!env.CLOUDFLARE_ACCOUNT_ID || !env.CF_AIG_GATEWAY_SLUG || !env.CF_AIG_TOKEN) {
+		return { state: "NOT_CONFIGURED", latencyMs: null, errorMessage: "CLOUDFLARE_ACCOUNT_ID, CF_AIG_GATEWAY_SLUG, or CF_AIG_TOKEN not set" };
 	}
 
 	const url = `https://gateway.ai.cloudflare.com/v1/${env.CLOUDFLARE_ACCOUNT_ID}/${env.CF_AIG_GATEWAY_SLUG}/compat/chat/completions`;
@@ -25,9 +25,12 @@ export async function testGoogleAiStudio(env: AdminEnv): Promise<HealthResult> {
 	try {
 		const res = await fetch(url, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { 
+				"Content-Type": "application/json",
+				"cf-aig-authorization": `Bearer ${env.CF_AIG_TOKEN.trim()}`,
+			},
 			body: JSON.stringify({
-				model: "google-ai-studio/gemini-2.0-flash",
+				model: "google-ai-studio/gemini-3.6-flash",
 				messages: [{ role: "user", content: "ping" }],
 				max_tokens: 1,
 			}),

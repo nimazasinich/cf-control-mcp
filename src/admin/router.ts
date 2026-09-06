@@ -129,8 +129,16 @@ export async function handleAdmin(request: Request, env: AdminEnv): Promise<Resp
 			if (result.ok) {
 				await setProviderAlias(env, id, "default");
 				await logAudit(env, "provider.credential.set", id, `secret_id=${result.secretId}`);
+				
+				// Post-config verification
+				const health = id === "google-ai-studio" ? await testGoogleAiStudio(env) : { state: "NOT_CONFIGURED" as const, latencyMs: null, errorMessage: "no health check implemented" };
+				await recordHealthResult(env, id, health.state, health.latencyMs, health.errorMessage);
+				await logAudit(env, "provider.health-test", id, health.state);
+				
+				return json({ ...result, healthState: health.state }, 200);
 			}
-			return json(result, result.ok ? 200 : 502);
+			await recordHealthResult(env, id, "NOT_CONFIGURED", null, result.error || "Credential set failed");
+			return json(result, 502);
 		}
 
 		if (action === "credential" && request.method === "DELETE") {
@@ -138,9 +146,11 @@ export async function handleAdmin(request: Request, env: AdminEnv): Promise<Resp
 			if (result.ok) {
 				await setProviderAlias(env, id, null);
 				await logAudit(env, "provider.credential.delete", id, null);
+				await recordHealthResult(env, id, "REVOKED", null, null);
 			}
 			return json(result, result.ok ? 200 : 502);
 		}
+
 	}
 
 	if (path === "/admin/api/logs" && request.method === "GET") {
