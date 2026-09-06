@@ -1,4 +1,4 @@
-name: Probe Wandbox live adapter
+name: Probe free code runners
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
       - .github/workflows/_probe-wandbox-live.yml
 
 jobs:
-  probe:
+  wandbox-stable:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,17 +16,71 @@ jobs:
           ref: feat/wandbox-code-runner
       - run: npm ci
       - run: npm run build:test
-      - name: Execute live Wandbox adapter
+      - name: Execute a stable Wandbox compiler
         run: |
           node <<'NODE'
           const { wandboxRuntimes, wandboxExecute } = require('./build-test/src/code-execution/wandbox.js');
           (async () => {
             const runtimes = await wandboxRuntimes();
-            if (!Array.isArray(runtimes) || runtimes.length === 0) throw new Error('empty Wandbox runtime catalog');
-            const result = await wandboxExecute('python', '*', 'print("WANDBOX_LIVE_OK")', '', []);
-            if (!result || !result.run || result.run.code !== 0 || !String(result.run.stdout).includes('WANDBOX_LIVE_OK')) {
+            const python = runtimes.filter(r => /python/i.test(String(r.language || '')) || /python/i.test(String(r.name || '')));
+            console.log('Python candidates:', python.slice(0, 20).map(r => ({name:r.name, version:r.version, language:r.language, display:r['display-name']})));
+            const stable = python.find(r => !/(head|latest|nightly|dev|master|trunk)/i.test(`${r.name} ${r['display-name'] || ''}`));
+            if (!stable) throw new Error('no stable Python compiler found');
+            console.log(`Selected stable compiler: ${stable.name}`);
+            const result = await wandboxExecute(String(stable.name), '*', 'print("WANDBOX_STABLE_OK")', '', []);
+            if (!result?.run || result.run.code !== 0 || !String(result.run.stdout).includes('WANDBOX_STABLE_OK')) {
               throw new Error(`unexpected Wandbox result: ${JSON.stringify(result)}`);
             }
-            console.log(`PASS: Wandbox live adapter; runtimes=${runtimes.length}; compiler=${result.compiler?.name}`);
+            console.log(`PASS: Wandbox stable execution; compiler=${result.compiler?.name}`);
           })().catch((err) => { console.error(err); process.exit(1); });
           NODE
+
+  paiza-guest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Execute Python via paiza.IO guest API
+        run: |
+          python3 - <<'PY'
+          import json, time, urllib.parse, urllib.request
+
+          BASE = 'https://api.paiza.io/runners'
+          def post(path, data):
+              encoded = urllib.parse.urlencode(data).encode()
+              with urllib.request.urlopen(BASE + path, data=encoded, timeout=15) as r:
+                  return json.loads(r.read().decode())
+          def get(path, params):
+              url = BASE + path + '?' + urllib.parse.urlencode(params)
+              with urllib.request.urlopen(url, timeout=15) as r:
+                  return json.loads(r.read().decode())
+
+          created = post('/create.json', {
+              'source_code': 'print("PAIZA_GUEST_OK")',
+              'language': 'python3',
+              'api_key': 'guest',
+          })
+          session_id = created.get('id')
+          if not session_id:
+              raise SystemExit('FAIL: paiza create did not return id: ' + json.dumps(created))
+          print('paiza session created')
+
+          status = None
+          for _ in range(20):
+              state = get('/get_status.json', {'id': session_id, 'api_key': 'guest'})
+              status = state.get('status')
+              print('paiza status:', status)
+              if status == 'completed':
+                  break
+              if status not in ('running', 'completed'):
+                  raise SystemExit('FAIL: unexpected paiza status: ' + json.dumps(state))
+              time.sleep(1)
+          if status != 'completed':
+              raise SystemExit('FAIL: paiza execution did not complete within bounded poll window')
+
+          details = get('/get_details.json', {'id': session_id, 'api_key': 'guest'})
+          stdout = str(details.get('stdout') or '')
+          stderr = str(details.get('stderr') or '')
+          exit_code = details.get('exit_code')
+          if 'PAIZA_GUEST_OK' not in stdout or str(exit_code) != '0':
+              raise SystemExit('FAIL: unexpected paiza details: ' + json.dumps(details))
+          print('PASS: paiza.IO guest execution; exit_code=0; stderr_len=' + str(len(stderr)))
+          PY
