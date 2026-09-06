@@ -12,5 +12,5 @@
     "noEmit": false,
     "rootDir": "."
   },
-  "include": ["src/internet", "test"]
+  "include": ["src/internet", "src/index.ts", "test"]
 }
