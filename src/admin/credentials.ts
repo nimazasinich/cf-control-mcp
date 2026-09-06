@@ -65,6 +65,7 @@ export async function setProviderCredential(
 	const secretName = `${env.CF_AIG_GATEWAY_SLUG}_${providerSlug}_${alias}`;
 	let secretId = "";
 
+	// Step 1: Discover existing secret to decide POST vs PATCH
 	const listRes = await fetch(
 		`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/secrets_store/stores/${storeId}/secrets`,
 		{ headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` } }
@@ -73,6 +74,7 @@ export async function setProviderCredential(
 	const existingSecret = listData.result?.find((s) => s.name === secretName);
 
 	if (existingSecret) {
+		// PATCH existing
 		secretId = existingSecret.id;
 		const patchRes = await fetch(
 			`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/secrets_store/stores/${storeId}/secrets/${secretId}`,
@@ -84,6 +86,7 @@ export async function setProviderCredential(
 		);
 		if (!patchRes.ok) return { ok: false, configured: false, providerConfigLinked: false, error: `Secret PATCH failed: ${patchRes.status}` };
 	} else {
+		// POST new
 		const postRes = await fetch(
 			`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/secrets_store/stores/${storeId}/secrets`,
 			{
@@ -97,11 +100,13 @@ export async function setProviderCredential(
 		secretId = postData.result[0].id;
 	}
 
+	// Verify activation
 	const isActive = await pollSecretActive(env, storeId, secretId);
 	if (!isActive) {
 		return { ok: false, configured: false, providerConfigLinked: false, error: "Secret activation timed out" };
 	}
 
+	// Step 2: Idempotent Provider Config linkage
 	const pcUrl = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai-gateway/gateways/${env.CF_AIG_GATEWAY_SLUG}/provider_configs`;
 	const getPcRes = await fetch(pcUrl, { headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` } });
 	const getPcData = await getPcRes.json<{ success: boolean; result?: Array<{ id: string; provider_slug: string; alias: string; default_config?: boolean | number }> }>();
@@ -112,6 +117,11 @@ export async function setProviderCredential(
 			return { ok: true, configured: true, providerConfigLinked: true, secretId };
 		}
 
+		// Existing config was found but is NOT flagged as the account default.
+		// Previously this branch returned early here, silently leaving BYOK
+		// requests unresolved against this credential (production acceptance
+		// gate "BYOK Provider Config" failed with matching default config=False).
+		// Reconcile it instead of trusting mere existence.
 		const patchPcRes = await fetch(`${pcUrl}/${existingConfig.id}`, {
 			method: "PATCH",
 			headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`, "Content-Type": "application/json" },
@@ -151,6 +161,8 @@ export async function deleteProviderCredential(
 	}
 
 	let providerConfigDeleted = false;
+	
+	// Step 1: Try undocumented DELETE (by finding ID first)
 	const pcUrl = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai-gateway/gateways/${env.CF_AIG_GATEWAY_SLUG}/provider_configs`;
 	const getPcRes = await fetch(pcUrl, { headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` } });
 	const getPcData = await getPcRes.json<{ success: boolean; result?: Array<{ id: string; provider_slug: string; alias: string }> }>();
@@ -165,10 +177,13 @@ export async function deleteProviderCredential(
 			providerConfigDeleted = true;
 		}
 	} else {
+		// If it didn't exist, we consider it deleted.
 		providerConfigDeleted = true;
 	}
 
 	let credentialRevoked = false;
+
+	// Step 2: Delete from Secrets Store
 	const storeId = await getSecretsStoreId(env);
 	if (storeId) {
 		const listRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/secrets_store/stores/${storeId}/secrets`, {
