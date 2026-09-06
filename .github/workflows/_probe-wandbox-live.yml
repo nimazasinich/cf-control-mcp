@@ -1,0 +1,32 @@
+name: Probe Wandbox live adapter
+
+on:
+  push:
+    branches:
+      - feat/wandbox-code-runner
+    paths:
+      - .github/workflows/_probe-wandbox-live.yml
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/wandbox-code-runner
+      - run: npm ci
+      - run: npm run build:test
+      - name: Execute live Wandbox adapter
+        run: |
+          node <<'NODE'
+          const { wandboxRuntimes, wandboxExecute } = require('./build-test/src/code-execution/wandbox.js');
+          (async () => {
+            const runtimes = await wandboxRuntimes();
+            if (!Array.isArray(runtimes) || runtimes.length === 0) throw new Error('empty Wandbox runtime catalog');
+            const result = await wandboxExecute('python', '*', 'print("WANDBOX_LIVE_OK")', '', []);
+            if (!result || !result.run || result.run.code !== 0 || !String(result.run.stdout).includes('WANDBOX_LIVE_OK')) {
+              throw new Error(`unexpected Wandbox result: ${JSON.stringify(result)}`);
+            }
+            console.log(`PASS: Wandbox live adapter; runtimes=${runtimes.length}; compiler=${result.compiler?.name}`);
+          })().catch((err) => { console.error(err); process.exit(1); });
+          NODE
