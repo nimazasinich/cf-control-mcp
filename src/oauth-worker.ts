@@ -1,4 +1,4 @@
-import legacyWorker, { type Env } from "./index";
+import legacyWorker, { tools, type Env } from "./index";
 import { handleProviderGateway } from "./provider-gateway/router";
 import { handleAdmin } from "./admin/router";
 
@@ -623,7 +623,7 @@ export default {
 
     // v1.8 Admin Console — owner-only, session-cookie auth signed with
     // MCP_AUTH_TOKEN (never protected by GATEWAY_AUTH_TOKEN alone).
-    if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) return handleAdmin(request, env);
+    if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) return handleAdmin(request, env, tools);
 
     if (url.pathname === "/" && request.method === "GET") {
       return json({

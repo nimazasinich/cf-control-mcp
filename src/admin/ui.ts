@@ -57,7 +57,11 @@ button.action{background:var(--accent);border:none;color:#fff;padding:6px 10px;b
 button.action.secondary{background:#475569}button.action.danger{background:var(--bad)}button.action.warn{background:var(--warn)}
 button.action:disabled,.header-action:disabled{opacity:.5;cursor:not-allowed}
 .muted{color:var(--muted)}.small{font-size:12px}.alias-list{display:flex;gap:4px;flex-wrap:wrap}.alias{background:#334155;border-radius:3px;padding:2px 6px;font-size:11px}
-input[type=password]{padding:6px;border-radius:4px;border:2px solid var(--border);background:var(--bg);color:var(--text)}
+input[type=password],input[type=search]{padding:7px 9px;border-radius:4px;border:2px solid var(--border);background:var(--bg);color:var(--text)}
+input[type=search]{min-width:280px}
+.tool-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;flex-wrap:wrap}
+.tool-schema{max-width:520px}.tool-schema summary{cursor:pointer;color:#bfdbfe;font-weight:700}.tool-schema pre{white-space:pre-wrap;word-break:break-word;max-height:260px;overflow:auto;background:var(--bg);border:1px solid var(--border);padding:9px;border-radius:4px;font-size:11px}
+.READ_ONLY{background:#1d4ed8}.DESTRUCTIVE{background:var(--bad)}.OPEN_WORLD{background:var(--warn)}.IDEMPOTENT{background:var(--good)}
 @media(max-width:900px){header{align-items:flex-start;flex-wrap:wrap}main{padding:14px}.panel-head{align-items:flex-start;flex-direction:column}table{min-width:700px}}
 </style></head><body>
 <header>
@@ -66,6 +70,7 @@ input[type=password]{padding:6px;border-radius:4px;border:2px solid var(--border
 <button data-tab="overview" class="active">Overview</button>
 <button data-tab="providers">Providers</button>
 <button data-tab="models">Models</button>
+<button data-tab="mcp-tools">MCP Tools</button>
 <button data-tab="routing">Routing</button>
 <button data-tab="health">Health</button>
 <button data-tab="usage">Usage</button>
@@ -106,6 +111,24 @@ input[type=password]{padding:6px;border-radius:4px;border:2px solid var(--border
   </table></div>
 </section>
 
+<section id="mcp-tools" class="panel">
+  <div class="panel-head"><div><h2>MCP Tools</h2><p>Runtime catalog exposed by the same registry used by MCP tools/list. Handler code and secrets are never returned.</p></div></div>
+  <div class="cards">
+    <div class="card"><div class="card-label">Registered tools</div><div id="stat-tools-total" class="card-value">—</div></div>
+    <div class="card"><div class="card-label">Read-only hint</div><div id="stat-tools-readonly" class="card-value">—</div></div>
+    <div class="card"><div class="card-label">Destructive hint</div><div id="stat-tools-destructive" class="card-value">—</div></div>
+    <div class="card"><div class="card-label">Open-world hint</div><div id="stat-tools-openworld" class="card-value">—</div></div>
+  </div>
+  <div class="tool-toolbar">
+    <div class="muted small" id="tools-filter-summary">Loading tool catalog…</div>
+    <input id="tools-search" type="search" placeholder="Search tools by name or description" autocomplete="off">
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Tool</th><th>Description</th><th>Safety / behavior hints</th><th>Input schema</th></tr></thead>
+    <tbody id="tools-body"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+  </table></div>
+</section>
+
 <section id="routing" class="panel">
   <div class="panel-head"><div><h2>Routing</h2><p>Routes remain configured when a target is disabled; operational state is shown explicitly.</p></div></div>
   <div class="table-wrap"><table>
@@ -143,6 +166,7 @@ input[type=password]{padding:6px;border-radius:4px;border:2px solid var(--border
 <script>
 const noticeEl = document.getElementById('notice');
 let noticeTimer = null;
+let mcpToolsCache = [];
 
 function esc(value){
   return String(value == null ? '' : value)
@@ -190,6 +214,7 @@ document.querySelectorAll('nav button').forEach(function(button){
     if(button.dataset.tab==='overview') loadOverview();
     if(button.dataset.tab==='providers') loadProviders();
     if(button.dataset.tab==='models') loadModels();
+    if(button.dataset.tab==='mcp-tools') loadMcpTools();
     if(button.dataset.tab==='routing') loadRouting();
     if(button.dataset.tab==='health') loadHealth();
     if(button.dataset.tab==='usage') loadUsage();
@@ -199,7 +224,7 @@ document.querySelectorAll('nav button').forEach(function(button){
 });
 document.getElementById('refresh-all').addEventListener('click', async function(){
   const button=this; setBusy(button,true,'Refreshing…');
-  try { await Promise.all([refreshOperational(), loadHealth(), loadLogs()]); showNotice('Admin state refreshed.','ok'); }
+  try { await Promise.all([refreshOperational(), loadMcpTools(), loadHealth(), loadLogs()]); showNotice('Admin state refreshed.','ok'); }
   catch(err){ showNotice('Refresh failed: '+err.message,'error'); }
   finally { setBusy(button,false); }
 });
@@ -258,6 +283,46 @@ async function loadModels(){
   }).join('');
   document.getElementById('models-body').innerHTML = rows || '<tr><td colspan="6" class="muted">No models registered.</td></tr>';
 }
+
+function toolHintsHtml(tool){
+  const a = tool.annotations || {};
+  const hints = [];
+  if(a.readOnlyHint) hints.push('<span class="badge READ_ONLY">READ ONLY</span>');
+  if(a.destructiveHint) hints.push('<span class="badge DESTRUCTIVE">DESTRUCTIVE</span>');
+  if(a.idempotentHint) hints.push('<span class="badge IDEMPOTENT">IDEMPOTENT</span>');
+  if(a.openWorldHint) hints.push('<span class="badge OPEN_WORLD">OPEN WORLD</span>');
+  return hints.length ? '<div class="actions">'+hints.join('')+'</div>' : '<span class="muted">no hints</span>';
+}
+
+function renderMcpTools(){
+  const input = document.getElementById('tools-search');
+  const query = (input && input.value ? input.value : '').trim().toLowerCase();
+  const visible = mcpToolsCache.filter(function(tool){
+    return !query || String(tool.name||'').toLowerCase().includes(query) || String(tool.description||'').toLowerCase().includes(query);
+  });
+  document.getElementById('tools-filter-summary').textContent = visible.length + ' of ' + mcpToolsCache.length + ' tool(s) shown';
+  document.getElementById('tools-body').innerHTML = visible.map(function(tool){
+    const schema = JSON.stringify(tool.inputSchema || {}, null, 2);
+    return '<tr>'+
+      '<td><code><strong>'+esc(tool.name)+'</strong></code></td>'+
+      '<td><span class="small">'+esc(tool.description||'—')+'</span></td>'+
+      '<td>'+toolHintsHtml(tool)+'</td>'+
+      '<td><details class="tool-schema"><summary>View schema</summary><pre>'+esc(schema)+'</pre></details></td>'+
+    '</tr>';
+  }).join('') || '<tr><td colspan="4" class="muted">No tools match this filter.</td></tr>';
+}
+
+async function loadMcpTools(){
+  const d = await api('/admin/api/tools');
+  mcpToolsCache = Array.isArray(d.tools) ? d.tools : [];
+  document.getElementById('stat-tools-total').textContent = d.count ?? mcpToolsCache.length;
+  document.getElementById('stat-tools-readonly').textContent = d.readOnlyCount ?? 0;
+  document.getElementById('stat-tools-destructive').textContent = d.destructiveCount ?? 0;
+  document.getElementById('stat-tools-openworld').textContent = d.openWorldCount ?? 0;
+  renderMcpTools();
+}
+
+document.getElementById('tools-search').addEventListener('input', renderMcpTools);
 
 async function loadRouting(){
   const d = await api('/admin/api/routing');
