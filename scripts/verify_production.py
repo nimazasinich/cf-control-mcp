@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Fail-closed production acceptance verification for cf-control-mcp v1.8.
 
-This script is intended for GitHub Actions or an operator shell with secrets supplied
-through environment variables. It never prints secret values and exits non-zero if
-any required acceptance gate FAILS or is BLOCKED.
+Designed for GitHub Actions or an operator shell with credentials supplied only
+through environment variables. Secret values are redacted. Required gates fail
+closed. Explicit Google/Gemini HTTP 429 quota exhaustion is reported as
+non-gating QUOTA so an exhausted upstream daily allowance is not confused with
+a Worker/configuration regression.
 """
 from __future__ import annotations
 
@@ -15,17 +17,31 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-BASE_URL = os.environ.get("PRODUCTION_BASE_URL", "https://cf-control-mcp.amin-chinisaz-edu.workers.dev").rstrip("/")
+BASE_URL = os.environ.get(
+    "PRODUCTION_BASE_URL",
+    "https://cf-control-mcp.amin-chinisaz-edu.workers.dev",
+).rstrip("/")
 GATEWAY_AUTH_TOKEN = os.environ.get("GATEWAY_AUTH_TOKEN", "").strip()
 CF_API_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
 CF_ACCOUNT_ID = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
 CF_AIG_TOKEN = os.environ.get("CF_AIG_TOKEN", "").strip()
-D1_DATABASE_ID = os.environ.get("D1_DATABASE_ID", "138a2aef-9f5a-4635-8346-dc474fdfff93").strip()
+D1_DATABASE_ID = os.environ.get(
+    "D1_DATABASE_ID", "138a2aef-9f5a-4635-8346-dc474fdfff93"
+).strip()
 GATEWAY_SLUG = os.environ.get("CF_AIG_GATEWAY_SLUG", "cf-control-mcp").strip()
 WORKER_SCRIPT_NAME = os.environ.get("WORKER_SCRIPT_NAME", "cf-control-mcp").strip()
 
 KNOWN_SECRETS = [s for s in (GATEWAY_AUTH_TOKEN, CF_API_TOKEN, CF_AIG_TOKEN) if s]
 TOKENISH = re.compile(r"(?:cfut_|ghp_|hf_|vck_)[A-Za-z0-9_-]{12,}")
+QUOTA_MARKERS = (
+    "quota",
+    "rate limit",
+    "rate-limit",
+    "rate_limit",
+    "resource exhausted",
+    "resource_exhausted",
+    "exceeded your current",
+)
 
 
 def redact(text: str) -> str:
@@ -35,15 +51,31 @@ def redact(text: str) -> str:
     return TOKENISH.sub("<REDACTED>", safe)
 
 
+def _json_object(raw: str) -> dict[str, Any]:
+    """Return a mapping for any response shape.
+
+    Some upstream errors are JSON arrays. Wrapping unexpected roots prevents
+    verifier crashes while preserving the original payload for diagnostics.
+    """
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {}
+    if isinstance(parsed, dict):
+        return parsed
+    return {"_root": parsed}
+
+
 def http_req(
     url: str,
     method: str = "GET",
     headers: dict[str, str] | None = None,
     data: Any = None,
 ) -> tuple[int, dict[str, Any], str]:
-    merged = {"User-Agent": "cf-control-production-verifier/1.8"}
+    merged = {"User-Agent": "cf-control-production-verifier/1.8.2"}
     if headers:
         merged.update(headers)
+
     body = None
     if data is not None:
         if isinstance(data, (dict, list)):
@@ -53,32 +85,56 @@ def http_req(
             body = data.encode("utf-8")
         elif isinstance(data, bytes):
             body = data
+
     req = urllib.request.Request(url, data=body, headers=merged, method=method)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
-            try:
-                parsed = json.loads(raw)
-            except Exception:
-                parsed = {}
-            return resp.status, parsed, redact(raw)
+            return resp.status, _json_object(raw), redact(raw)
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")
-        try:
-            parsed = json.loads(raw)
-        except Exception:
-            parsed = {}
-        return exc.code, parsed, redact(raw)
+        return exc.code, _json_object(raw), redact(raw)
     except Exception as exc:
         return 0, {}, redact(str(exc))
 
 
-results: list[tuple[str, str, str]] = []
+def _list_field(payload: dict[str, Any], key: str) -> list[Any]:
+    value = payload.get(key)
+    return value if isinstance(value, list) else []
 
 
-def record(name: str, status: str, evidence: str) -> None:
-    results.append((name, status, redact(evidence)))
-    print(f"{status}: {name} — {redact(evidence)}")
+def _dict_field(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    value = payload.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def _d1_rows(payload: dict[str, Any]) -> tuple[list[dict[str, Any]], bool]:
+    result = payload.get("result")
+    if not isinstance(result, list) or not result or not isinstance(result[0], dict):
+        return [], False
+    rows = result[0].get("results")
+    if not isinstance(rows, list):
+        return [], False
+    clean = [row for row in rows if isinstance(row, dict)]
+    return clean, len(clean) == len(rows)
+
+
+def is_explicit_quota(status: int, raw: str) -> bool:
+    if status != 429:
+        return False
+    low = raw.lower()
+    return any(marker in low for marker in QUOTA_MARKERS)
+
+
+# name, status, evidence, gating
+results: list[tuple[str, str, str, bool]] = []
+
+
+def record(name: str, status: str, evidence: str, *, gating: bool = True) -> None:
+    safe = redact(evidence)
+    results.append((name, status, safe, gating))
+    suffix = "" if gating else " [non-gating]"
+    print(f"{status}: {name}{suffix} — {safe}")
 
 
 def require_env() -> bool:
@@ -92,7 +148,11 @@ def require_env() -> bool:
         if value:
             record(f"environment:{name}", "PASS", "configured")
         else:
-            record(f"environment:{name}", "BLOCKED", "missing required runtime/verification secret")
+            record(
+                f"environment:{name}",
+                "BLOCKED",
+                "missing required runtime/verification secret",
+            )
             ok = False
     return ok
 
@@ -105,30 +165,33 @@ def main() -> int:
 
     env_ok = require_env()
 
+    # Authentication challenge.
     status, parsed, raw = http_req(
         f"{BASE_URL}/v1/models",
         headers={"Authorization": "Bearer invalid-test-token-123"},
     )
-    if status == 401 and parsed.get("error", {}).get("code") == "invalid_api_key":
+    error = _dict_field(parsed, "error")
+    if status == 401 and error.get("code") == "invalid_api_key":
         record("/v1 invalid-token challenge", "PASS", "HTTP 401 invalid_api_key")
     else:
-        record("/v1 invalid-token challenge", "FAIL", f"expected 401 invalid_api_key, got HTTP {status}: {raw[:200]}")
+        record(
+            "/v1 invalid-token challenge",
+            "FAIL",
+            f"expected 401 invalid_api_key, got HTTP {status}: {raw[:200]}",
+        )
 
-    # Read /v1/models now, but validate its contents only after D1 is read.
-    # The live D1 registry (models.enabled + provider.enabled + routing rules)
-    # is the source of truth; a fixed seven-model expectation is incorrect.
+    # Read /v1/models now; validate against D1 after registry readback.
     models_http_status = 0
     models_http_ids: list[str] = []
     models_http_raw = ""
     if GATEWAY_AUTH_TOKEN:
-        models_http_status, parsed, models_http_raw = http_req(
+        models_http_status, models_payload, models_http_raw = http_req(
             f"{BASE_URL}/v1/models",
             headers={"Authorization": f"Bearer {GATEWAY_AUTH_TOKEN}"},
         )
-        models_http_ids = [
-            m.get("id") for m in parsed.get("data", [])
-            if isinstance(m, dict) and isinstance(m.get("id"), str)
-        ]
+        for model in _list_field(models_payload, "data"):
+            if isinstance(model, dict) and isinstance(model.get("id"), str):
+                models_http_ids.append(model["id"])
     else:
         record("/v1/models", "BLOCKED", "GATEWAY_AUTH_TOKEN missing")
 
@@ -136,63 +199,94 @@ def main() -> int:
     cf_headers = {"Authorization": f"Bearer {CF_API_TOKEN}"} if CF_API_TOKEN else {}
     enabled_aliases: set[str] = set()
 
+    # D1 registry and runtime model consistency.
     if CF_API_TOKEN and account_id:
-        d1_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/d1/database/{D1_DATABASE_ID}/query"
+        d1_url = (
+            f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
+            f"/d1/database/{D1_DATABASE_ID}/query"
+        )
         query_results: dict[str, list[dict[str, Any]]] = {}
         queries = {
-            "providers": "SELECT id, display_name, kind, enabled, byok_alias, health_state FROM providers;",
+            "providers": (
+                "SELECT id, display_name, kind, enabled, byok_alias, health_state "
+                "FROM providers;"
+            ),
             "models": "SELECT id, provider_id, public_alias, enabled FROM models;",
-            "routing_rules": "SELECT public_alias, model_id, updated_at FROM routing_rules;",
+            "routing_rules": (
+                "SELECT public_alias, model_id, updated_at FROM routing_rules;"
+            ),
         }
         d1_ok = True
         for label, sql in queries.items():
-            status, parsed, raw = http_req(d1_url, method="POST", headers=cf_headers, data={"sql": sql})
-            rows = parsed.get("result", [{}])[0].get("results", []) if status == 200 and parsed.get("result") else []
+            q_status, q_payload, q_raw = http_req(
+                d1_url, method="POST", headers=cf_headers, data={"sql": sql}
+            )
+            rows, shape_ok = _d1_rows(q_payload)
             query_results[label] = rows
-            if status != 200:
+            if q_status != 200 or not shape_ok:
                 d1_ok = False
-                record(f"D1:{label}", "FAIL", f"HTTP {status}: {raw[:250]}")
+                record(
+                    f"D1:{label}",
+                    "FAIL",
+                    f"HTTP {q_status}; valid_shape={shape_ok}; body={q_raw[:250]}",
+                )
             else:
                 record(f"D1:{label}", "PASS", f"HTTP 200; {len(rows)} rows")
 
         providers = query_results.get("providers", [])
         models = query_results.get("models", [])
         rules = query_results.get("routing_rules", [])
-        rules_map = {r.get("public_alias"): r.get("model_id") for r in rules}
+        rules_map = {
+            r.get("public_alias"): r.get("model_id")
+            for r in rules
+            if isinstance(r.get("public_alias"), str)
+        }
 
         enabled_provider_ids = {
-            p.get("id") for p in providers
+            p.get("id")
+            for p in providers
             if p.get("enabled") == 1 and isinstance(p.get("id"), str)
         }
         enabled_models = {
-            m.get("id") for m in models
+            m.get("id")
+            for m in models
             if m.get("enabled") == 1
             and m.get("provider_id") in enabled_provider_ids
             and isinstance(m.get("id"), str)
         }
         enabled_aliases = {
-            r.get("public_alias") for r in rules
-            if r.get("model_id") in enabled_models and isinstance(r.get("public_alias"), str)
+            r.get("public_alias")
+            for r in rules
+            if r.get("model_id") in enabled_models
+            and isinstance(r.get("public_alias"), str)
         }
         expected_model_ids = enabled_models | enabled_aliases
 
         if GATEWAY_AUTH_TOKEN:
             actual_model_ids = set(models_http_ids)
-            models_match = models_http_status == 200 and actual_model_ids == expected_model_ids
+            models_match = (
+                models_http_status == 200 and actual_model_ids == expected_model_ids
+            )
             record(
                 "/v1/models D1 consistency",
                 "PASS" if models_match else "FAIL",
-                f"HTTP {models_http_status}; expected={sorted(expected_model_ids)}; returned={sorted(actual_model_ids)}"
+                f"HTTP {models_http_status}; expected={sorted(expected_model_ids)}; "
+                f"returned={sorted(actual_model_ids)}"
                 + ("" if models_match else f"; body={models_http_raw[:250]}"),
             )
 
         provider_ok = any(
-            p.get("id") == "google-ai-studio" and p.get("enabled") == 1 and p.get("byok_alias") == "default"
+            p.get("id") == "google-ai-studio"
+            and p.get("enabled") == 1
+            and p.get("byok_alias") == "default"
             for p in providers
         )
-        registered_model_ids = {m.get("id") for m in models if isinstance(m.get("id"), str)}
+        registered_model_ids = {
+            m.get("id") for m in models if isinstance(m.get("id"), str)
+        }
         routing_targets_registered = all(
-            isinstance(r.get("model_id"), str) and r.get("model_id") in registered_model_ids
+            isinstance(r.get("model_id"), str)
+            and r.get("model_id") in registered_model_ids
             for r in rules
         )
         invariants_ok = (
@@ -206,137 +300,289 @@ def main() -> int:
         record(
             "D1 routing/provider invariants",
             "PASS" if invariants_ok else "FAIL",
-            f"provider_ok={provider_ok}; routing_targets_registered={routing_targets_registered}; routes={rules_map}",
+            f"provider_ok={provider_ok}; "
+            f"routing_targets_registered={routing_targets_registered}; "
+            f"routes={rules_map}",
         )
 
-        # Only run real completion gates for aliases that the D1 registry says
-        # are currently available. An intentionally disabled model must not
-        # turn deployment verification into a false failure.
+        # Real completion gates only for aliases currently enabled by D1.
         for alias, marker in (("fast", "FAST_OK"), ("coding", "CODING_OK")):
             if alias not in enabled_aliases:
-                print(f"INFO: /v1/chat/completions:{alias} not tested because alias is disabled by D1 model/provider state")
+                print(
+                    f"INFO: /v1/chat/completions:{alias} not tested because "
+                    "alias is disabled by D1 model/provider state"
+                )
                 continue
             if not GATEWAY_AUTH_TOKEN:
-                record(f"/v1/chat/completions:{alias}", "BLOCKED", "GATEWAY_AUTH_TOKEN missing")
+                record(
+                    f"/v1/chat/completions:{alias}",
+                    "BLOCKED",
+                    "GATEWAY_AUTH_TOKEN missing",
+                )
                 continue
-            status, parsed, raw = http_req(
+
+            c_status, c_payload, c_raw = http_req(
                 f"{BASE_URL}/v1/chat/completions",
                 method="POST",
                 headers={"Authorization": f"Bearer {GATEWAY_AUTH_TOKEN}"},
                 data={
                     "model": alias,
-                    "messages": [{"role": "user", "content": f"Return the single word {marker}."}],
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": f"Return the single word {marker}.",
+                        }
+                    ],
                     "max_tokens": 10,
                 },
             )
-            choices = parsed.get("choices", [])
-            if status == 200 and choices:
-                returned_model = parsed.get("model", "")
-                record(f"/v1/chat/completions:{alias}", "PASS", f"HTTP 200 real completion; response model={returned_model}")
+            choices = _list_field(c_payload, "choices")
+            if c_status == 200 and choices:
+                returned_model = c_payload.get("model", "")
+                record(
+                    f"/v1/chat/completions:{alias}",
+                    "PASS",
+                    f"HTTP 200 real completion; response model={returned_model}",
+                )
+            elif is_explicit_quota(c_status, c_raw):
+                record(
+                    f"/v1/chat/completions:{alias}",
+                    "QUOTA",
+                    f"HTTP 429 explicit upstream Gemini quota exhaustion: {c_raw[:300]}",
+                    gating=False,
+                )
             else:
-                record(f"/v1/chat/completions:{alias}", "FAIL", f"HTTP {status}: {raw[:350]}")
+                record(
+                    f"/v1/chat/completions:{alias}",
+                    "FAIL",
+                    f"HTTP {c_status}: {c_raw[:350]}",
+                )
     else:
-        record("D1 readback", "BLOCKED", "CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID missing")
+        record(
+            "D1 readback",
+            "BLOCKED",
+            "CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID missing",
+        )
         if GATEWAY_AUTH_TOKEN:
             record("/v1/models D1 consistency", "BLOCKED", "D1 readback unavailable")
 
+    # AI Gateway authentication metadata.
     if CF_API_TOKEN and account_id:
-        aig_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai-gateway/gateways/{GATEWAY_SLUG}"
-        status, parsed, raw = http_req(aig_url, headers=cf_headers)
-        result = parsed.get("result", {}) if status == 200 else {}
-        auth_enabled = result.get("authentication", False) or result.get("auth_required", False)
-        if status == 200 and auth_enabled in (True, 1):
+        aig_url = (
+            f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
+            f"/ai-gateway/gateways/{GATEWAY_SLUG}"
+        )
+        a_status, a_payload, a_raw = http_req(aig_url, headers=cf_headers)
+        result = _dict_field(a_payload, "result") if a_status == 200 else {}
+        auth_enabled = result.get("authentication", False) or result.get(
+            "auth_required", False
+        )
+        if a_status == 200 and auth_enabled in (True, 1):
             record("AI Gateway authentication", "PASS", "authentication=true")
         else:
-            record("AI Gateway authentication", "FAIL", f"HTTP {status}; authentication={auth_enabled}; {raw[:200]}")
+            record(
+                "AI Gateway authentication",
+                "FAIL",
+                f"HTTP {a_status}; authentication={auth_enabled}; {a_raw[:200]}",
+            )
     else:
-        record("AI Gateway authentication", "BLOCKED", "management credential/account ID missing")
+        record(
+            "AI Gateway authentication",
+            "BLOCKED",
+            "management credential/account ID missing",
+        )
 
+    # BYOK Secrets Store + Provider Config metadata.
     if CF_API_TOKEN and account_id:
         expected_secret_name = f"{GATEWAY_SLUG}_google-ai-studio_default"
-        ss_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/secrets_store/stores"
-        status, parsed, raw = http_req(ss_url, headers=cf_headers)
-        stores = parsed.get("result", []) if status == 200 else []
-        default_store = next((s for s in stores if s.get("name") == "default_secrets_store"), None)
+        ss_url = (
+            f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
+            "/secrets_store/stores"
+        )
+        ss_status, ss_payload, ss_raw = http_req(ss_url, headers=cf_headers)
+        stores = _list_field(ss_payload, "result") if ss_status == 200 else []
+        default_store = next(
+            (
+                s
+                for s in stores
+                if isinstance(s, dict) and s.get("name") == "default_secrets_store"
+            ),
+            None,
+        )
         if not default_store:
-            record("BYOK Secrets Store", "FAIL", f"default_secrets_store not found; HTTP {status}: {raw[:180]}")
+            record(
+                "BYOK Secrets Store",
+                "FAIL",
+                f"default_secrets_store not found; HTTP {ss_status}: {ss_raw[:180]}",
+            )
         else:
             sec_url = f"{ss_url}/{default_store.get('id')}/secrets"
-            sec_status, sec_parsed, sec_raw = http_req(sec_url, headers=cf_headers)
-            secret_rows = sec_parsed.get("result", []) if sec_status == 200 else []
-            target = next((s for s in secret_rows if s.get("name") == expected_secret_name), None)
-            scopes = target.get("scopes", []) if target else []
-            secret_ok = bool(target and target.get("status") == "active" and "ai_gateway" in scopes)
+            sec_status, sec_payload, sec_raw = http_req(sec_url, headers=cf_headers)
+            secret_rows = (
+                _list_field(sec_payload, "result") if sec_status == 200 else []
+            )
+            target = next(
+                (
+                    s
+                    for s in secret_rows
+                    if isinstance(s, dict) and s.get("name") == expected_secret_name
+                ),
+                None,
+            )
+            scopes = (
+                target.get("scopes", [])
+                if isinstance(target, dict)
+                and isinstance(target.get("scopes", []), list)
+                else []
+            )
+            secret_ok = bool(
+                isinstance(target, dict)
+                and target.get("status") == "active"
+                and "ai_gateway" in scopes
+            )
             record(
                 "BYOK Secrets Store",
                 "PASS" if secret_ok else "FAIL",
-                f"secret={expected_secret_name}; active={bool(target and target.get('status') == 'active')}; ai_gateway_scope={'ai_gateway' in scopes}; HTTP {sec_status}",
+                f"secret={expected_secret_name}; active="
+                f"{bool(isinstance(target, dict) and target.get('status') == 'active')}; "
+                f"ai_gateway_scope={'ai_gateway' in scopes}; HTTP {sec_status}",
             )
             if sec_status != 200:
                 print(redact(sec_raw[:180]))
 
-        pc_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai-gateway/gateways/{GATEWAY_SLUG}/provider_configs"
-        pc_status, pc_parsed, pc_raw = http_req(pc_url, headers=cf_headers)
-        configs = pc_parsed.get("result", []) if pc_status == 200 else []
+        pc_url = (
+            f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
+            f"/ai-gateway/gateways/{GATEWAY_SLUG}/provider_configs"
+        )
+        pc_status, pc_payload, pc_raw = http_req(pc_url, headers=cf_headers)
+        configs = _list_field(pc_payload, "result") if pc_status == 200 else []
         config = next(
-            (c for c in configs if c.get("provider_slug") == "google-ai-studio" and c.get("alias") == "default"),
+            (
+                c
+                for c in configs
+                if isinstance(c, dict)
+                and c.get("provider_slug") == "google-ai-studio"
+                and c.get("alias") == "default"
+            ),
             None,
         )
-        config_ok = bool(config and config.get("default_config") in (True, 1))
-        record("BYOK Provider Config", "PASS" if config_ok else "FAIL", f"HTTP {pc_status}; matching default config={config_ok}")
+        config_ok = bool(
+            isinstance(config, dict)
+            and config.get("default_config") in (True, 1)
+        )
+        record(
+            "BYOK Provider Config",
+            "PASS" if config_ok else "FAIL",
+            f"HTTP {pc_status}; matching default config={config_ok}",
+        )
         if pc_status != 200:
             print(redact(pc_raw[:180]))
     else:
-        record("BYOK configuration", "BLOCKED", "management credential/account ID missing")
+        record(
+            "BYOK configuration",
+            "BLOCKED",
+            "management credential/account ID missing",
+        )
 
+    # Optional direct raw CF_AIG_TOKEN probe.
     if CF_AIG_TOKEN and account_id:
-        direct_url = f"https://gateway.ai.cloudflare.com/v1/{account_id}/{GATEWAY_SLUG}/compat/chat/completions"
-        status, parsed, _ = http_req(
+        direct_url = (
+            f"https://gateway.ai.cloudflare.com/v1/{account_id}/{GATEWAY_SLUG}"
+            "/compat/chat/completions"
+        )
+        d_status, d_payload, d_raw = http_req(
             direct_url,
             method="POST",
             headers={"cf-aig-authorization": f"Bearer {CF_AIG_TOKEN}"},
             data={
                 "model": "google-ai-studio/gemini-3.6-flash",
-                "messages": [{"role": "user", "content": "Return the single word AIG_OK."}],
+                "messages": [
+                    {"role": "user", "content": "Return the single word AIG_OK."}
+                ],
                 "max_tokens": 10,
             },
         )
-        choices = parsed.get("choices", [])
-        if status == 200 and choices:
-            print("INFO: optional direct CF_AIG_TOKEN BYOK probe also returned HTTP 200")
+        choices = _list_field(d_payload, "choices")
+        if d_status == 200 and choices:
+            print("INFO: optional direct CF_AIG_TOKEN BYOK probe returned HTTP 200")
+        elif is_explicit_quota(d_status, d_raw):
+            print(
+                "INFO: optional direct CF_AIG_TOKEN probe reached upstream and "
+                "returned explicit Gemini quota exhaustion (HTTP 429)"
+            )
         else:
-            print(f"INFO: optional direct CF_AIG_TOKEN probe did not pass (HTTP {status}); required Worker end-to-end gates decide acceptance")
+            print(
+                f"INFO: optional direct CF_AIG_TOKEN probe did not pass "
+                f"(HTTP {d_status}); required Worker gates decide acceptance"
+            )
     else:
-        print("INFO: raw CF_AIG_TOKEN is intentionally not required in CI; Worker end-to-end gates verify the runtime secret")
+        print(
+            "INFO: raw CF_AIG_TOKEN is intentionally not required in CI; "
+            "Worker end-to-end gates verify the runtime secret"
+        )
 
+    # Required Worker secret binding names.
     if CF_API_TOKEN and account_id:
-        secrets_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/workers/scripts/{WORKER_SCRIPT_NAME}/secrets"
-        status, parsed, raw = http_req(secrets_url, headers=cf_headers)
-        rows = parsed.get("result", []) if status == 200 else []
-        names = {row.get("name") for row in rows if isinstance(row, dict)}
-        required_names = {"MCP_AUTH_TOKEN", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "GATEWAY_AUTH_TOKEN", "CF_AIG_TOKEN"}
+        secrets_url = (
+            f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
+            f"/workers/scripts/{WORKER_SCRIPT_NAME}/secrets"
+        )
+        s_status, s_payload, s_raw = http_req(secrets_url, headers=cf_headers)
+        rows = _list_field(s_payload, "result") if s_status == 200 else []
+        names = {
+            row.get("name")
+            for row in rows
+            if isinstance(row, dict) and isinstance(row.get("name"), str)
+        }
+        required_names = {
+            "MCP_AUTH_TOKEN",
+            "CLOUDFLARE_API_TOKEN",
+            "CLOUDFLARE_ACCOUNT_ID",
+            "GATEWAY_AUTH_TOKEN",
+            "CF_AIG_TOKEN",
+        }
         missing = sorted(required_names - names)
         record(
             "Worker required secret bindings",
-            "PASS" if status == 200 and not missing else "FAIL",
-            f"HTTP {status}; missing={missing}",
+            "PASS" if s_status == 200 and not missing else "FAIL",
+            f"HTTP {s_status}; missing={missing}",
         )
-        if status != 200:
-            print(redact(raw[:180]))
+        if s_status != 200:
+            print(redact(s_raw[:180]))
     else:
-        record("Worker required secret bindings", "BLOCKED", "management credential/account ID missing")
+        record(
+            "Worker required secret bindings",
+            "BLOCKED",
+            "management credential/account ID missing",
+        )
 
     print("=================================================================")
     print("FINAL ACCEPTANCE MATRIX")
     print("=================================================================")
-    for name, status, evidence in results:
-        print(f"{status:7} | {name} | {evidence}")
+    for name, status, evidence, gating in results:
+        gate = "GATE" if gating else "INFO"
+        print(f"{status:7} | {gate:4} | {name} | {evidence}")
 
-    non_pass = [(n, s) for n, s, _ in results if s != "PASS"]
-    if not env_ok or non_pass:
-        print(f"FINAL: FAIL/BLOCKED — {len(non_pass)} acceptance gate(s) are not PASS")
+    blocking = [
+        (name, status)
+        for name, status, _evidence, gating in results
+        if gating and status != "PASS"
+    ]
+    quota_count = sum(1 for _n, status, _e, _g in results if status == "QUOTA")
+    if not env_ok or blocking:
+        print(
+            f"FINAL: FAIL/BLOCKED — {len(blocking)} required acceptance "
+            "gate(s) are not PASS"
+        )
         return 1
-    print("FINAL: PASS — all production acceptance gates passed")
+
+    if quota_count:
+        print(
+            f"FINAL: PASS — all required acceptance gates passed; "
+            f"{quota_count} external Gemini quota observation(s) are non-gating"
+        )
+    else:
+        print("FINAL: PASS — all required production acceptance gates passed")
     return 0
 
 
