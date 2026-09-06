@@ -1,0 +1,205 @@
+name: Admin Visual Acceptance Artifacts
+
+on:
+  push:
+    branches:
+      - feat/dreamworker-production-admin-ui
+    paths:
+      - "src/admin/**"
+      - "test/admin-*.test.ts"
+      - "scripts/render_admin_visuals.cjs"
+      - ".github/workflows/admin-visual-acceptance.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/admin/**"
+      - "test/admin-*.test.ts"
+      - "scripts/render_admin_visuals.cjs"
+      - ".github/workflows/admin-visual-acceptance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  screenshots:
+    name: 1368x753 screenshot generation
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout exact SHA
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build test representation of production Admin HTML
+        run: npm run build:test
+
+      - name: Generate test-only deterministic fixture HTML
+        run: |
+          rm -rf admin-visual-artifacts
+          node scripts/render_admin_visuals.cjs admin-visual-artifacts
+          test -s admin-visual-artifacts/dashboard-fixture.html
+          test -s admin-visual-artifacts/login-fixture.html
+          test -s admin-visual-artifacts/production-dashboard.html
+          test -s admin-visual-artifacts/production-login.html
+
+      - name: Prove fixture-only markers are absent from production HTML
+        run: |
+          ! grep -F "VISUAL_ACCEPTANCE_FIXTURE_ONLY" admin-visual-artifacts/production-dashboard.html
+          ! grep -F "VISUAL_ACCEPTANCE_FIXTURE_ONLY" admin-visual-artifacts/production-login.html
+          ! grep -F "VISUAL TEST DATA" admin-visual-artifacts/production-dashboard.html
+          ! grep -F "VISUAL TEST DATA" admin-visual-artifacts/production-login.html
+          ! grep -F "data-visual-fixture" admin-visual-artifacts/production-dashboard.html
+          ! grep -F "data-visual-fixture" admin-visual-artifacts/production-login.html
+
+      - name: Locate Chrome
+        id: chrome
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          if [ -z "$CHROME" ]; then
+            echo "No supported Chrome/Chromium binary found on runner" >&2
+            exit 1
+          fi
+          echo "binary=$CHROME" >> "$GITHUB_OUTPUT"
+          "$CHROME" --version
+
+      - name: Capture exact 1368x753 surfaces
+        shell: bash
+        env:
+          CHROME: ${{ steps.chrome.outputs.binary }}
+        run: |
+          set -euo pipefail
+          ROOT="$PWD/admin-visual-artifacts"
+          DASH="file://$ROOT/dashboard-fixture.html"
+          LOGIN="file://$ROOT/login-fixture.html"
+          mkdir -p "$ROOT/screenshots" "$ROOT/dom"
+
+          capture() {
+            local name="$1"
+            local url="$2"
+            local budget="${3:-3400}"
+            echo "Capturing $name"
+            "$CHROME" \
+              --headless=new \
+              --no-sandbox \
+              --disable-gpu \
+              --disable-dev-shm-usage \
+              --allow-file-access-from-files \
+              --hide-scrollbars \
+              --force-device-scale-factor=1 \
+              --window-size=1368,753 \
+              --virtual-time-budget="$budget" \
+              --screenshot="$ROOT/screenshots/$name.png" \
+              "$url" >/tmp/chrome-$name.out 2>/tmp/chrome-$name.err || {
+                cat /tmp/chrome-$name.err >&2
+                exit 1
+              }
+          }
+
+          inspect_dom() {
+            local name="$1"
+            local url="$2"
+            local budget="${3:-3400}"
+            "$CHROME" \
+              --headless=new \
+              --no-sandbox \
+              --disable-gpu \
+              --disable-dev-shm-usage \
+              --allow-file-access-from-files \
+              --force-device-scale-factor=1 \
+              --window-size=1368,753 \
+              --virtual-time-budget="$budget" \
+              --dump-dom "$url" >"$ROOT/dom/$name.html" 2>"$ROOT/dom/$name.err"
+            grep -q 'data-visual-runtime="ok"' "$ROOT/dom/$name.html" || {
+              echo "Runtime audit did not settle cleanly for $name" >&2
+              cat "$ROOT/dom/$name.err" >&2 || true
+              exit 1
+            }
+            grep -q 'data-visual-overflow="ok"' "$ROOT/dom/$name.html" || {
+              echo "Viewport overflow audit failed for $name" >&2
+              exit 1
+            }
+          }
+
+          capture login "$LOGIN" 1000
+          capture loading "$DASH?visualState=loading#overview" 900
+          capture loading-degraded "$DASH?visualState=degraded#overview" 3400
+
+          capture overview "$DASH?visualState=normal#overview"
+          capture providers "$DASH?visualState=normal#providers"
+          capture models "$DASH?visualState=normal#models"
+          capture routing "$DASH?visualState=normal#routing"
+          capture mcp-tools "$DASH?visualState=normal#mcp-tools"
+          capture health "$DASH?visualState=normal#health"
+          capture usage "$DASH?visualState=normal#usage"
+          capture audit "$DASH?visualState=normal#logs"
+          capture settings-environment "$DASH?visualState=normal&settingsView=environment#settings"
+          capture settings-security "$DASH?visualState=normal&settingsView=security#settings"
+          capture settings-session "$DASH?visualState=normal&settingsView=session#settings"
+          capture settings-boundary "$DASH?visualState=normal&settingsView=boundary#settings"
+
+          capture overview-empty "$DASH?visualState=empty#overview"
+          capture health-error "$DASH?visualState=health-error#health" 3900
+
+          for page in overview providers models routing mcp-tools health usage audit; do
+            hash="$page"
+            [ "$page" = "audit" ] && hash="logs"
+            inspect_dom "$page" "$DASH?visualState=normal#$hash"
+          done
+          for view in environment security session boundary; do
+            inspect_dom "settings-$view" "$DASH?visualState=normal&settingsView=$view#settings"
+          done
+
+      - name: Verify screenshot dimensions and manifest
+        run: |
+          node <<'NODE'
+          const fs=require('node:fs');
+          const path=require('node:path');
+          const dir='admin-visual-artifacts/screenshots';
+          const files=fs.readdirSync(dir).filter(f=>f.endsWith('.png')).sort();
+          if(files.length<17) throw new Error(`expected at least 17 screenshots, found ${files.length}`);
+          for(const file of files){
+            const b=fs.readFileSync(path.join(dir,file));
+            if(b.toString('ascii',1,4)!=='PNG') throw new Error(`${file}: not PNG`);
+            const w=b.readUInt32BE(16),h=b.readUInt32BE(20);
+            if(w!==1368||h!==753) throw new Error(`${file}: expected 1368x753, got ${w}x${h}`);
+          }
+          fs.writeFileSync('admin-visual-artifacts/SCREENSHOT_MANIFEST.txt',[
+            `exact_sha=${process.env.GITHUB_SHA}`,
+            'viewport=1368x753',
+            `screenshots=${files.length}`,
+            ...files,
+            '',
+            'SCREENSHOTS GENERATED',
+            'VISUAL ACCEPTANCE PASS requires human/agent inspection of the PNG artifact.',
+          ].join('\n'));
+          console.log(`Verified ${files.length} PNGs at 1368x753`);
+          NODE
+
+      - name: Run Admin UI contract tests on same SHA
+        run: npm run test:internet
+
+      - name: Upload screenshot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-visual-1368x753-${{ github.sha }}
+          path: admin-visual-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Acceptance boundary
+        if: success()
+        run: |
+          echo "SCREENSHOTS GENERATED for $GITHUB_SHA"
+          echo "This workflow does NOT declare VISUAL ACCEPTANCE PASS. Inspect the artifact before merge."
