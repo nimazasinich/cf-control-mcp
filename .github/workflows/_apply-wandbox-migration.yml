@@ -11,10 +11,26 @@ permissions:
   contents: write
 
 jobs:
-  smoke:
+  patch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: feat/wandbox-code-runner
-      - run: echo "workflow-smoke-ok"
+          fetch-depth: 0
+      - name: Apply source patch
+        run: python3 scripts/_apply_wandbox_patch.py
+      - name: Verify migration
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run typecheck
+          npm test
+          python3 -m py_compile scripts/exec_tools_live_smoke.py
+      - name: Commit verified migration
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "github-actions[bot]"
+          git add src/index.ts src/code-execution/wandbox.ts test/exec-tools.test.ts scripts/exec_tools_live_smoke.py
+          git commit -m "feat: migrate run_code backend from Piston to Wandbox"
+          git push origin HEAD:feat/wandbox-code-runner
