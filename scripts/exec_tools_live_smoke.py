@@ -97,19 +97,19 @@ def tool_result(
     if not isinstance(result, dict):
         fail(f"{tool_name}: missing MCP result object")
 
-    is_error = result.get("isError") is True
-    if is_error != expect_error:
-        fail(
-            f"{tool_name}: expected isError={str(expect_error).lower()}, "
-            f"got {str(is_error).lower()}"
-        )
-
     content = result.get("content")
     if not isinstance(content, list) or not content or not isinstance(content[0], dict):
         fail(f"{tool_name}: missing MCP text content")
     text = content[0].get("text")
     if not isinstance(text, str):
         fail(f"{tool_name}: MCP content text is not a string")
+
+    is_error = result.get("isError") is True
+    if is_error != expect_error:
+        fail(
+            f"{tool_name}: expected isError={str(expect_error).lower()}, "
+            f"got {str(is_error).lower()}; tool_text={text[:500]!r}"
+        )
 
     try:
         parsed: Any = json.loads(text)
@@ -124,19 +124,72 @@ def require_run(payload: Any, label: str) -> dict[str, Any]:
     return payload["run"]
 
 
+def verify_github_exec() -> None:
+    dispatch_payload, _ = tool_result(
+        201,
+        "gh_run_code",
+        {"language": "python", "code": 'print("GH_MCP_EXEC_OK")'},
+    )
+    if not isinstance(dispatch_payload, dict):
+        fail("gh_run_code: expected object result")
+    run_key = dispatch_payload.get("run_key")
+    if dispatch_payload.get("status") != "dispatched" or not isinstance(run_key, str) or not run_key:
+        fail(
+            "gh_run_code: expected status=dispatched and non-empty run_key; "
+            f"got {json.dumps(dispatch_payload)[:400]}"
+        )
+    print("PASS: gh_run_code dispatched through deployed Worker")
+
+    deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
+    poll_id = 202
+    last_status = "not_started"
+    while time.monotonic() < deadline:
+        poll_payload, _ = tool_result(
+            poll_id,
+            "gh_get_run_result",
+            {"run_key": run_key},
+        )
+        poll_id += 1
+        if not isinstance(poll_payload, dict):
+            fail("gh_get_run_result: expected object result")
+        last_status = str(poll_payload.get("status", ""))
+        if last_status == "completed":
+            conclusion = poll_payload.get("conclusion")
+            log = str(poll_payload.get("log", ""))
+            if conclusion != "success":
+                fail(f"gh_get_run_result: completed with conclusion={conclusion!r}")
+            if "GH_MCP_EXEC_OK" not in log:
+                fail("gh_get_run_result: completed successfully but expected output marker was absent")
+            print("PASS: gh_get_run_result completed through deployed Worker with expected log output")
+            return
+        if last_status not in {"not_found_yet", "queued", "in_progress", "waiting", "pending"}:
+            fail(f"gh_get_run_result: unexpected status={last_status!r}")
+        print(f"INFO: gh_get_run_result status={last_status}; polling again")
+        time.sleep(POLL_SECONDS)
+
+    fail(
+        f"gh_get_run_result: timed out after {POLL_TIMEOUT_SECONDS}s; "
+        f"last status={last_status!r}"
+    )
+
+
 def main() -> int:
     print("============================================================")
     print("EXEC TOOLS LIVE SMOKE — deployed Worker /mcp")
     print("============================================================")
     print(f"Target: {BASE_URL}")
 
-    # Real Piston runtimes lookup through Worker -> emkc.org.
+    # Real Piston metadata lookup through Worker -> emkc.org.
     runtimes, _ = tool_result(101, "list_code_runtimes", {})
     if not isinstance(runtimes, list) or not any(
         isinstance(row, dict) and row.get("language") == "python" for row in runtimes
     ):
         fail("list_code_runtimes: no Python runtime returned by live Piston API")
     print(f"PASS: list_code_runtimes live Piston lookup ({len(runtimes)} runtimes)")
+
+    # Verify the GitHub Actions execution round-trip before Piston execute so a
+    # Piston-specific upstream failure cannot hide independent GitHub evidence.
+    verify_github_exec()
 
     # Real Piston success path.
     success_payload, _ = tool_result(
@@ -178,55 +231,8 @@ def main() -> int:
         )
     print(f"PASS: run_code live Piston invalid-language path (HTTP {match.group(1)})")
 
-    # Real Worker -> GitHub workflow dispatch.
-    dispatch_payload, _ = tool_result(
-        201,
-        "gh_run_code",
-        {"language": "python", "code": 'print("GH_MCP_EXEC_OK")'},
-    )
-    if not isinstance(dispatch_payload, dict):
-        fail("gh_run_code: expected object result")
-    run_key = dispatch_payload.get("run_key")
-    if dispatch_payload.get("status") != "dispatched" or not isinstance(run_key, str) or not run_key:
-        fail(
-            "gh_run_code: expected status=dispatched and non-empty run_key; "
-            f"got {json.dumps(dispatch_payload)[:400]}"
-        )
-    print("PASS: gh_run_code dispatched through deployed Worker")
-
-    deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
-    poll_id = 202
-    last_status = "not_started"
-    while time.monotonic() < deadline:
-        poll_payload, _ = tool_result(
-            poll_id,
-            "gh_get_run_result",
-            {"run_key": run_key},
-        )
-        poll_id += 1
-        if not isinstance(poll_payload, dict):
-            fail("gh_get_run_result: expected object result")
-        last_status = str(poll_payload.get("status", ""))
-        if last_status == "completed":
-            conclusion = poll_payload.get("conclusion")
-            log = str(poll_payload.get("log", ""))
-            if conclusion != "success":
-                fail(f"gh_get_run_result: completed with conclusion={conclusion!r}")
-            if "GH_MCP_EXEC_OK" not in log:
-                fail("gh_get_run_result: completed successfully but expected output marker was absent")
-            print("PASS: gh_get_run_result completed through deployed Worker with expected log output")
-            print("FINAL: PASS — all four exec tools passed live end-to-end smoke verification")
-            return 0
-        if last_status not in {"not_found_yet", "queued", "in_progress", "waiting", "pending"}:
-            fail(f"gh_get_run_result: unexpected status={last_status!r}")
-        print(f"INFO: gh_get_run_result status={last_status}; polling again")
-        time.sleep(POLL_SECONDS)
-
-    fail(
-        f"gh_get_run_result: timed out after {POLL_TIMEOUT_SECONDS}s; "
-        f"last status={last_status!r}"
-    )
-    return 1
+    print("FINAL: PASS — all four exec tools passed live end-to-end smoke verification")
+    return 0
 
 
 if __name__ == "__main__":
