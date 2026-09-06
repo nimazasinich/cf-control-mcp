@@ -35,7 +35,7 @@ test('Admin Health: google-ai-studio not configured', async () => {
 
 test('Admin Health: google-ai-studio healthy', async () => {
   const env = { CLOUDFLARE_ACCOUNT_ID: 'acc', CF_AIG_GATEWAY_SLUG: 'gw', CF_AIG_TOKEN: 'mock' } as AdminEnv;
-  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = async (_input: RequestInfo | URL, _init?: RequestInit) => {
     return new Response(JSON.stringify({}), { status: 200 });
   };
   const res = await testGoogleAiStudio(env);
@@ -46,7 +46,7 @@ test('Admin Health: google-ai-studio healthy', async () => {
 
 test('Admin Health: google-ai-studio auth error', async () => {
   const env = { CLOUDFLARE_ACCOUNT_ID: 'acc', CF_AIG_GATEWAY_SLUG: 'gw', CF_AIG_TOKEN: 'mock' } as AdminEnv;
-  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = async (_input: RequestInfo | URL, _init?: RequestInit) => {
     return new Response('unauthorized', { status: 401 });
   };
   const res = await testGoogleAiStudio(env);
@@ -80,9 +80,9 @@ test('Provider Gateway: resolves default aliases and custom D1 routing rules', a
   assert.equal(await resolveModel('custom-alias', { ...baseEnv, DM_DB: mockDb }), 'custom-gemini-model');
 });
 
-test('Provider Gateway: handleModels returns 200 with aliases and models list', async () => {
+test('Provider Gateway: handleModels returns static fallback without D1', async () => {
   const { handleModels } = await import('../src/provider-gateway/models');
-  const res = handleModels();
+  const res = await handleModels({ CLOUDFLARE_ACCOUNT_ID: 'acc' });
   assert.equal(res.status, 200);
   const data = await res.json() as { object: string; data: Array<{ id: string }> };
   assert.equal(data.object, 'list');
@@ -91,6 +91,96 @@ test('Provider Gateway: handleModels returns 200 with aliases and models list', 
   assert.ok(ids.includes('coding'));
   assert.ok(ids.includes('research'));
   assert.ok(ids.includes('gemini-3.5-flash'));
+});
+
+test('Provider Gateway: /v1/models reflects only enabled D1 models and aliases', async () => {
+  const { handleModels } = await import('../src/provider-gateway/models');
+  const mockDb = {
+    prepare: (query: string) => ({
+      all: async () => {
+        if (query.includes('SELECT m.id')) {
+          return {
+            results: [
+              { id: 'gemini-3.8-flash', provider_id: 'google-ai-studio', created_at: '2026-01-01 00:00:00' },
+            ],
+          };
+        }
+        if (query.includes('SELECT r.public_alias')) {
+          return {
+            results: [
+              { public_alias: 'coding', created_at: '2026-01-01 00:00:00' },
+              { public_alias: 'research', created_at: '2026-01-01 00:00:00' },
+            ],
+          };
+        }
+        return { results: [] };
+      },
+    }),
+  } as unknown as D1Database;
+
+  const res = await handleModels({ CLOUDFLARE_ACCOUNT_ID: 'acc', DM_DB: mockDb });
+  assert.equal(res.status, 200);
+  const data = await res.json() as { data: Array<{ id: string }> };
+  const ids = data.data.map(m => m.id);
+  assert.deepEqual(ids, ['coding', 'research', 'gemini-3.8-flash']);
+  assert.equal(ids.includes('fast'), false);
+  assert.equal(ids.includes('gemini-3.6-flash'), false);
+});
+
+test('Provider Gateway: disabled D1 model is rejected before upstream fetch', async () => {
+  const { handleChatCompletions } = await import('../src/provider-gateway/cloudflare-ai-gateway');
+  const mockDb = {
+    prepare: (query: string) => ({
+      bind: (...args: any[]) => ({
+        first: async () => {
+          if (query.includes('routing_rules')) {
+            return args[0] === 'fast' ? { model_id: 'gemini-3.6-flash' } : null;
+          }
+          if (query.includes('model_enabled')) {
+            return { id: 'gemini-3.6-flash', model_enabled: 0, provider_enabled: 1 };
+          }
+          return null;
+        },
+      }),
+    }),
+  } as unknown as D1Database;
+
+  globalThis.fetch = async () => {
+    throw new Error('upstream fetch must not be reached for a disabled model');
+  };
+
+  const req = new Request('https://example.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'fast', messages: [{ role: 'user', content: 'hi' }] }),
+  });
+  const res = await handleChatCompletions(req, {
+    CLOUDFLARE_ACCOUNT_ID: 'acc',
+    CF_AIG_GATEWAY_SLUG: 'gw',
+    CF_AIG_TOKEN: 'aig-token',
+    DM_DB: mockDb,
+  });
+
+  assert.equal(res.status, 404);
+  const data = await res.json() as { error: { code: string; message: string } };
+  assert.equal(data.error.code, 'model_not_found');
+  assert.match(data.error.message, /disabled/);
+});
+
+test('Provider Gateway: D1 registry failure is fail-closed for /v1/models', async () => {
+  const { handleModels } = await import('../src/provider-gateway/models');
+  const mockDb = {
+    prepare: () => ({
+      all: async () => {
+        throw new Error('D1 unavailable');
+      },
+    }),
+  } as unknown as D1Database;
+
+  const res = await handleModels({ CLOUDFLARE_ACCOUNT_ID: 'acc', DM_DB: mockDb });
+  assert.equal(res.status, 503);
+  const data = await res.json() as { error: { code: string } };
+  assert.equal(data.error.code, 'model_registry_error');
 });
 
 test('Admin API: unauthenticated request handling', async () => {
@@ -112,4 +202,3 @@ test('Admin API: unauthenticated request handling', async () => {
   assert.ok(html.includes('cf-control-mcp — Admin'));
   assert.ok(html.includes('Sign in'));
 });
-
