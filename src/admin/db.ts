@@ -14,7 +14,15 @@ export async function listModels(env: AdminEnv): Promise<ModelRow[]> {
 }
 
 export async function listRoutingRules(env: AdminEnv): Promise<RoutingRuleRow[]> {
-	const { results } = await env.DM_DB.prepare("SELECT * FROM routing_rules ORDER BY public_alias").all<RoutingRuleRow>();
+	const { results } = await env.DM_DB.prepare(
+		`SELECT rr.public_alias, rr.model_id, rr.updated_at,
+		        m.enabled AS model_enabled, m.provider_id,
+		        p.enabled AS provider_enabled
+		 FROM routing_rules rr
+		 LEFT JOIN models m ON m.id = rr.model_id
+		 LEFT JOIN providers p ON p.id = m.provider_id
+		 ORDER BY rr.public_alias`
+	).all<RoutingRuleRow>();
 	return results ?? [];
 }
 
@@ -27,16 +35,35 @@ export async function getProvider(env: AdminEnv, id: string): Promise<ProviderRo
 	return env.DM_DB.prepare("SELECT * FROM providers WHERE id = ?").bind(id).first<ProviderRow>();
 }
 
-export async function setProviderEnabled(env: AdminEnv, id: string, enabled: boolean): Promise<void> {
-	await env.DM_DB.prepare("UPDATE providers SET enabled = ?, updated_at = datetime('now') WHERE id = ?")
+export async function setProviderEnabled(env: AdminEnv, id: string, enabled: boolean): Promise<{ rowsAffected: number }> {
+	const result = await env.DM_DB.prepare("UPDATE providers SET enabled = ?, updated_at = datetime('now') WHERE id = ?")
 		.bind(enabled ? 1 : 0, id)
 		.run();
+	return { rowsAffected: result.meta?.changes ?? 0 };
 }
 
 export async function setProviderAlias(env: AdminEnv, id: string, alias: string | null): Promise<void> {
 	await env.DM_DB.prepare("UPDATE providers SET byok_alias = ?, updated_at = datetime('now') WHERE id = ?")
 		.bind(alias, id)
 		.run();
+}
+
+export async function getModel(env: AdminEnv, id: string): Promise<ModelRow | null> {
+	return env.DM_DB.prepare("SELECT * FROM models WHERE id = ?").bind(id).first<ModelRow>();
+}
+
+export async function setModelEnabled(env: AdminEnv, id: string, enabled: boolean): Promise<{ rowsAffected: number }> {
+	const result = await env.DM_DB.prepare("UPDATE models SET enabled = ? WHERE id = ?")
+		.bind(enabled ? 1 : 0, id)
+		.run();
+	return { rowsAffected: result.meta?.changes ?? 0 };
+}
+
+export async function getRoutingRulesForModel(env: AdminEnv, modelId: string): Promise<RoutingRuleRow[]> {
+	const { results } = await env.DM_DB.prepare(
+		"SELECT * FROM routing_rules WHERE model_id = ?"
+	).bind(modelId).all<RoutingRuleRow>();
+	return results ?? [];
 }
 
 export async function recordHealthResult(
