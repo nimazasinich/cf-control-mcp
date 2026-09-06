@@ -53,6 +53,12 @@ export interface RoutingRuleRow {
 	public_alias: string;
 	model_id: string;
 	updated_at: string;
+	/** Runtime-enriched: 1 if model is enabled, 0 if not, null if model missing */
+	model_enabled?: number | null;
+	/** Runtime-enriched: provider id for the target model */
+	provider_id?: string | null;
+	/** Runtime-enriched: 1 if provider is enabled */
+	provider_enabled?: number | null;
 }
 
 export interface HealthCheckRow {
@@ -63,4 +69,3 @@ export interface HealthCheckRow {
 	latency_ms: number | null;
 	error_message: string | null;
 }
-
