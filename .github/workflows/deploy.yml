@@ -31,17 +31,16 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
-      - name: Validate required production secrets
+      - name: Validate required repository secrets
         env:
           MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
-          CF_AIG_TOKEN: ${{ secrets.CF_AIG_TOKEN }}
         run: |
           set -euo pipefail
           missing=0
-          for name in MCP_AUTH_TOKEN CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID GATEWAY_AUTH_TOKEN CF_AIG_TOKEN; do
+          for name in MCP_AUTH_TOKEN CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID GATEWAY_AUTH_TOKEN; do
             if [ -z "${!name:-}" ]; then
               echo "MISSING_REQUIRED_SECRET: $name"
               missing=1
@@ -50,12 +49,13 @@ jobs:
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
-          echo "PASS: all required production secrets are configured"
+          echo "PASS: required repository secrets are configured"
 
-      - name: Verify management token has access to the explicit account
+      - name: Verify explicit account and CF_AIG_TOKEN runtime binding
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_AIG_TOKEN_FROM_GITHUB: ${{ secrets.CF_AIG_TOKEN }}
         run: |
           set -euo pipefail
           code=$(curl --silent --show-error --output /tmp/account.json --write-out '%{http_code}' \
@@ -65,7 +65,29 @@ jobs:
             echo "FAIL: management token cannot access configured CLOUDFLARE_ACCOUNT_ID (HTTP $code)"
             exit 1
           fi
-          echo "PASS: management token can access configured account"
+
+          if [ -n "$CF_AIG_TOKEN_FROM_GITHUB" ]; then
+            echo "PASS: CF_AIG_TOKEN is available as an optional GitHub secret and will be refreshed"
+            exit 0
+          fi
+
+          code=$(curl --silent --show-error --output /tmp/worker-secrets.json --write-out '%{http_code}' \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/cf-control-mcp/secrets")
+          if [ "$code" != "200" ]; then
+            echo "FAIL: could not inspect Worker secret bindings (HTTP $code)"
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json, sys
+          with open('/tmp/worker-secrets.json', encoding='utf-8') as f:
+              data = json.load(f)
+          names = {row.get('name') for row in data.get('result', []) if isinstance(row, dict)}
+          if 'CF_AIG_TOKEN' not in names:
+              print('MISSING_WORKER_SECRET: CF_AIG_TOKEN. Run scripts/install_runtime_secrets.py securely before deploy.')
+              sys.exit(1)
+          print('PASS: existing Worker CF_AIG_TOKEN binding is present; Cloudflare preserves secrets across deploys')
+          PY
 
       - name: Deploy Worker and push required/optional secrets
         env:
@@ -93,7 +115,13 @@ jobs:
           printf '%s' "$CF_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put CLOUDFLARE_API_TOKEN
           printf '%s' "$ACCOUNT_ID" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put CLOUDFLARE_ACCOUNT_ID
           printf '%s' "$GATEWAY_AUTH_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put GATEWAY_AUTH_TOKEN
-          printf '%s' "$CF_AIG_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put CF_AIG_TOKEN
+
+          if [ -n "$CF_AIG_TOKEN" ]; then
+            echo "=== refreshing optional GitHub-sourced CF_AIG_TOKEN Worker secret ==="
+            printf '%s' "$CF_AIG_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put CF_AIG_TOKEN
+          else
+            echo "=== preserving existing Worker CF_AIG_TOKEN secret ==="
+          fi
 
           echo "=== pushing optional integration secrets ==="
           if [ -n "$HF_TOKEN" ]; then
@@ -125,7 +153,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
-          CF_AIG_TOKEN: ${{ secrets.CF_AIG_TOKEN }}
           HF_LIVE_CHECK: ${{ secrets.HUGGINGFACE_TOKEN != '' && '1' || '0' }}
         run: |
           set -euo pipefail
