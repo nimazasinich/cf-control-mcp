@@ -1,0 +1,90 @@
+name: Temporary apply Judge0 migration v3
+
+on:
+  push:
+    branches: [feat/judge0-code-runner]
+    paths:
+      - '.github/workflows/_apply-judge0-migration-v3.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/judge0-code-runner
+          fetch-depth: 0
+
+      - name: Patch Judge0 source wiring
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('src/index.ts')
+          s = p.read_text()
+          needle = 'import { internetTools } from "./internet/tools";\n'
+          replacement = needle + 'import { judge0Execute, judge0Runtimes } from "./code-execution/judge0";\n'
+          if replacement not in s:
+              if needle not in s: raise SystemExit('index import anchor not found')
+              s = s.replace(needle, replacement, 1)
+
+          env_anchor = '\t/** Optional. "owner/repo" that hosts .github/workflows/mcp-exec.yml. Defaults to nimazasinich/cf-control-mcp. */\n\tGITHUB_REPO?: string;\n'
+          env_block = env_anchor + '\t/** Optional Judge0 API base URL. Defaults to the official Judge0 CE RapidAPI endpoint. */\n\tJUDGE0_BASE_URL?: string;\n\t/** Optional Judge0 API key. Required for the default RapidAPI endpoint; store only as a Worker secret. */\n\tJUDGE0_API_KEY?: string;\n\t/** Optional auth header override for self-hosted/custom Judge0 instances. */\n\tJUDGE0_AUTH_HEADER?: string;\n\t/** Optional RapidAPI host override. */\n\tJUDGE0_API_HOST?: string;\n'
+          if '\tJUDGE0_API_KEY?: string;\n' not in s:
+              if env_anchor not in s: raise SystemExit('Env anchor not found')
+              s = s.replace(env_anchor, env_block, 1)
+
+          s = s.replace('// Sandbox code execution (Piston, emkc.org) — free, no API key required.', '// Bounded upstream fetches for sandbox/code-execution integrations.')
+          s = s.replace('(Piston or GitHub) can hold a Worker request open indefinitely', '(Judge0 or GitHub) can hold a Worker request open indefinitely')
+          pattern = re.compile(r'const PISTON_TIMEOUT_MS = 25_000;\nconst GITHUB_TIMEOUT_MS = 20_000;\n\n/\*\* Executes a snippet via the public Piston API.*?async function pistonRuntimes\(\): Promise<any> \{.*?\n\}\n', re.S)
+          s, n = pattern.subn('const GITHUB_TIMEOUT_MS = 20_000;\n', s, count=1)
+          if n != 1 and 'pistonExecute(' in s: raise SystemExit(f'Piston block removal count={n}')
+
+          old_desc = '''\t\tdescription:\n\t\t\t"Execute a short code snippet for free in an ephemeral public sandbox (Piston, emkc.org) and return " +\n\t\t\t"stdout, stderr, and exit code. Supports common languages (python, javascript/node, typescript, bash, " +\n\t\t\t"go, rust, java, c, cpp, etc — call list_code_runtimes for the exact catalog). No account or credentials " +\n\t\t\t"involved, no persistent state, and nothing here touches the Cloudflare/HF accounts. Not suitable for " +\n\t\t\t"secrets or private data: the sandbox is a shared free third-party service.",'''
+          new_desc = '''\t\tdescription:\n\t\t\t"Execute a short code snippet in an ephemeral Judge0 sandbox and return stdout, stderr, and exit code. " +\n\t\t\t"Supports common languages (python, javascript/node, typescript, bash, go, rust, java, c, cpp, etc — " +\n\t\t\t"call list_code_runtimes for the exact catalog). The default backend is Judge0 CE through RapidAPI and " +\n\t\t\t"requires JUDGE0_API_KEY as a Worker secret. No persistent state is used; do not send secrets or private data " +\n\t\t\t"to a third-party sandbox.",'''
+          if old_desc not in s: raise SystemExit('run_code description anchor not found')
+          s = s.replace(old_desc, new_desc, 1)
+          s = s.replace('language: { type: "string", description: "Piston language id, e.g. \'python\', \'javascript\', \'bash\', \'go\'" },', 'language: { type: "string", description: "Judge0 language alias or numeric language id, e.g. \'python\', \'javascript\', \'bash\', \'go\'" },', 1)
+
+          old_handler = '''\t\thandler: async (args) => {\n\t\t\tconst language = String(args.language ?? "").trim();\n\t\t\tconst code = String(args.code ?? "");\n\t\t\tif (!language) throw new Error("language is required");\n\t\t\tif (!code.trim()) throw new Error("code is empty");\n\t\t\tif (code.length > 200_000) throw new Error("code exceeds 200 KB sandbox limit");\n\t\t\tconst version = String(args.version ?? "*");\n\t\t\tconst stdin = String(args.stdin ?? "");\n\t\t\tconst cliArgs = Array.isArray(args.args) ? args.args.map((a) => String(a)).slice(0, 32) : [];\n\t\t\treturn await pistonExecute(language, version, code, stdin, cliArgs);\n\t\t},'''
+          new_handler = '''\t\thandler: async (args, env) => {\n\t\t\tconst language = String(args.language ?? "").trim();\n\t\t\tconst code = String(args.code ?? "");\n\t\t\tif (!language) throw new Error("language is required");\n\t\t\tif (!code.trim()) throw new Error("code is empty");\n\t\t\tif (code.length > 200_000) throw new Error("code exceeds 200 KB sandbox limit");\n\t\t\tconst version = String(args.version ?? "*");\n\t\t\tconst stdin = String(args.stdin ?? "");\n\t\t\tconst cliArgs = Array.isArray(args.args) ? args.args.map((a) => String(a)).slice(0, 32) : [];\n\t\t\treturn await judge0Execute(env, language, version, code, stdin, cliArgs);\n\t\t},'''
+          if old_handler not in s: raise SystemExit('run_code handler anchor not found')
+          s = s.replace(old_handler, new_handler, 1)
+
+          old_runtime = '''\t\tdescription: "List the languages/versions currently available in the free Piston sandbox used by run_code.",\n\t\tinputSchema: { type: "object", properties: {} },\n\t\tannotations: { readOnlyHint: true, openWorldHint: true },\n\t\thandler: async () => await pistonRuntimes(),'''
+          new_runtime = '''\t\tdescription: "List the languages/versions currently available from the configured Judge0 sandbox used by run_code.",\n\t\tinputSchema: { type: "object", properties: {} },\n\t\tannotations: { readOnlyHint: true, openWorldHint: true },\n\t\thandler: async (_args, env) => await judge0Runtimes(env),'''
+          if old_runtime not in s: raise SystemExit('list_code_runtimes anchor not found')
+          s = s.replace(old_runtime, new_runtime, 1)
+          s = s.replace('Unlike run_code (Piston), this can', 'Unlike run_code (Judge0), this can', 1)
+          p.write_text(s)
+
+          p = Path('wrangler.jsonc')
+          s = p.read_text()
+          anchor = '    "CF_AIG_GATEWAY_SLUG": "cf-control-mcp"\n'
+          replacement = '    "CF_AIG_GATEWAY_SLUG": "cf-control-mcp",\n    // Judge0 CE via the official RapidAPI endpoint; API key remains a Worker secret.\n    "JUDGE0_BASE_URL": "https://judge0-ce.p.rapidapi.com"\n'
+          if '"JUDGE0_BASE_URL"' not in s:
+              if anchor not in s: raise SystemExit('wrangler vars anchor not found')
+              s = s.replace(anchor, replacement, 1)
+          p.write_text(s)
+
+          p = Path('scripts/exec_tools_live_smoke.py')
+          s = p.read_text()
+          s = s.replace('Piston for run_code/list_code_runtimes', 'Judge0 for run_code/list_code_runtimes')
+          s = s.replace('PASS: list_code_runtimes live Piston lookup', 'PASS: list_code_runtimes live Judge0 lookup')
+          s = s.replace('expected Piston result.run object', 'expected Judge0-compatible result.run object')
+          s = s.replace('PISTON_MCP_EXEC_OK', 'JUDGE0_MCP_EXEC_OK')
+          s = s.replace('Piston run_code stdout', 'Judge0 run_code stdout')
+          p.write_text(s)
+          PY
+
+      - name: Commit source migration
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "github-actions[bot]"
+          git add src/index.ts wrangler.jsonc scripts/exec_tools_live_smoke.py
+          git commit -m "feat: wire run_code to Judge0"
+          git push origin HEAD:feat/judge0-code-runner
