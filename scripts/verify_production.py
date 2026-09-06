@@ -204,7 +204,7 @@ def main() -> int:
         status, parsed, raw = http_req(aig_url, headers=cf_headers)
         result = parsed.get("result", {}) if status == 200 else {}
         auth_enabled = result.get("authentication", False) or result.get("auth_required", False)
-        if status == 200 and auth_enabled is True:
+        if status == 200 and auth_enabled in (True, 1):
             record("AI Gateway authentication", "PASS", "authentication=true")
         else:
             record("AI Gateway authentication", "FAIL", f"HTTP {status}; authentication={auth_enabled}; {raw[:200]}")
@@ -241,7 +241,7 @@ def main() -> int:
             (c for c in configs if c.get("provider_slug") == "google-ai-studio" and c.get("alias") == "default"),
             None,
         )
-        config_ok = bool(config and config.get("default_config") is True)
+        config_ok = bool(config and config.get("default_config") in (True, 1))
         record("BYOK Provider Config", "PASS" if config_ok else "FAIL", f"HTTP {pc_status}; matching default config={config_ok}")
         if pc_status != 200:
             print(redact(pc_raw[:180]))
