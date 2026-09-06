@@ -19,11 +19,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
-          CF_AIG_TOKEN: ${{ secrets.CF_AIG_TOKEN }}
         run: |
           set -euo pipefail
           missing=0
-          for name in MCP_AUTH_TOKEN CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID GATEWAY_AUTH_TOKEN CF_AIG_TOKEN; do
+          for name in MCP_AUTH_TOKEN CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID GATEWAY_AUTH_TOKEN; do
             if [ -z "${!name:-}" ]; then
               echo "MISSING_REQUIRED_SECRET: $name"
               missing=1
@@ -41,7 +40,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
-          CF_AIG_TOKEN: ${{ secrets.CF_AIG_TOKEN }}
           HF_LIVE_CHECK: ${{ secrets.HUGGINGFACE_TOKEN != '' && '1' || '0' }}
         run: |
           set -euo pipefail
