@@ -121,7 +121,7 @@ function rpcError(id: JsonRpcRequest["id"], code: number, message: string, data?
 // Tool definitions
 // ---------------------------------------------------------------------------
 
-interface ToolDef {
+export interface ToolDef {
 	name: string;
 	description: string;
 	inputSchema: Record<string, unknown>;
@@ -257,6 +257,31 @@ function base64EncodeUtf8(text: string): string {
 // Sandbox code execution (Piston, emkc.org) — free, no API key required.
 // ---------------------------------------------------------------------------
 
+/**
+ * fetch() with a hard wall-clock timeout. Without this, a hung upstream
+ * (Piston or GitHub) can hold a Worker request open indefinitely — Workers
+ * bill/limit on wall time, so a stuck outbound call is a real availability
+ * bug, not just a slow response. Throws a labeled error naming the call site
+ * on timeout so it's distinguishable from a normal network/HTTP failure.
+ */
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, label: string): Promise<Response> {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		return await fetch(url, { ...init, signal: controller.signal });
+	} catch (err) {
+		if (err instanceof Error && err.name === "AbortError") {
+			throw new Error(`${label} timed out after ${timeoutMs}ms`);
+		}
+		throw err;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+const PISTON_TIMEOUT_MS = 25_000;
+const GITHUB_TIMEOUT_MS = 20_000;
+
 /** Executes a snippet via the public Piston API. Ephemeral, stateless, no secrets involved. */
 async function pistonExecute(
 	language: string,
@@ -265,17 +290,22 @@ async function pistonExecute(
 	stdin: string,
 	args: string[],
 ): Promise<any> {
-	const res = await fetch("https://emkc.org/api/v2/piston/execute", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			language,
-			version: version || "*",
-			files: [{ content: code }],
-			stdin: stdin || "",
-			args: args || [],
-		}),
-	});
+	const res = await fetchWithTimeout(
+		"https://emkc.org/api/v2/piston/execute",
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				language,
+				version: version || "*",
+				files: [{ content: code }],
+				stdin: stdin || "",
+				args: args || [],
+			}),
+		},
+		PISTON_TIMEOUT_MS,
+		"Piston execute",
+	);
 	const contentType = res.headers.get("content-type") ?? "";
 	const body = contentType.includes("application/json") ? await res.json() : await res.text();
 	if (!res.ok) {
@@ -285,7 +315,12 @@ async function pistonExecute(
 }
 
 async function pistonRuntimes(): Promise<any> {
-	const res = await fetch("https://emkc.org/api/v2/piston/runtimes");
+	const res = await fetchWithTimeout(
+		"https://emkc.org/api/v2/piston/runtimes",
+		{},
+		PISTON_TIMEOUT_MS,
+		"Piston list runtimes",
+	);
 	if (!res.ok) throw new Error(`Piston API error (${res.status}) listing runtimes`);
 	return await res.json();
 }
@@ -309,16 +344,21 @@ function ghRepo(env: Env): string {
 
 async function ghFetch(env: Env, path: string, init: RequestInit = {}): Promise<any> {
 	if (!env.GITHUB_PAT) throw new Error("GITHUB_PAT is not configured as a Worker secret");
-	const res = await fetch(`https://api.github.com${path}`, {
-		...init,
-		headers: {
-			Authorization: `Bearer ${env.GITHUB_PAT}`,
-			Accept: "application/vnd.github+json",
-			"X-GitHub-Api-Version": "2022-11-28",
-			"User-Agent": "cf-control-mcp",
-			...(init.headers ?? {}),
+	const res = await fetchWithTimeout(
+		`https://api.github.com${path}`,
+		{
+			...init,
+			headers: {
+				Authorization: `Bearer ${env.GITHUB_PAT}`,
+				Accept: "application/vnd.github+json",
+				"X-GitHub-Api-Version": "2022-11-28",
+				"User-Agent": "cf-control-mcp",
+				...(init.headers ?? {}),
+			},
 		},
-	});
+		GITHUB_TIMEOUT_MS,
+		`GitHub API ${path}`,
+	);
 	if (res.status === 204) return null;
 	const contentType = res.headers.get("content-type") ?? "";
 	const body = contentType.includes("application/json") ? await res.json() : await res.text();
@@ -346,19 +386,24 @@ async function ghGetRunLog(env: Env, runId: number): Promise<string> {
 	const jobsData = await ghFetch(env, `/repos/${repo}/actions/runs/${runId}/jobs`);
 	const job = (jobsData.jobs ?? [])[0];
 	if (!job) return "(no jobs found for this run yet)";
-	const res = await fetch(`https://api.github.com/repos/${repo}/actions/jobs/${job.id}/logs`, {
-		headers: {
-			Authorization: `Bearer ${env.GITHUB_PAT}`,
-			Accept: "application/vnd.github+json",
-			"User-Agent": "cf-control-mcp",
+	const res = await fetchWithTimeout(
+		`https://api.github.com/repos/${repo}/actions/jobs/${job.id}/logs`,
+		{
+			headers: {
+				Authorization: `Bearer ${env.GITHUB_PAT}`,
+				Accept: "application/vnd.github+json",
+				"User-Agent": "cf-control-mcp",
+			},
 		},
-	});
+		GITHUB_TIMEOUT_MS,
+		"GitHub job logs",
+	);
 	if (!res.ok) throw new Error(`GitHub API error (${res.status}) fetching job logs`);
 	const text = await res.text();
 	return text.length > 60_000 ? `${text.slice(0, 60_000)}\n... [truncated]` : text;
 }
 
-const tools: ToolDef[] = [
+export const tools: ToolDef[] = [
 	{
 		name: "proxyharvest_gateway_health",
 		description: "Check the live ProxyHarvest Cloudflare gateway, Cloud Edge Relay boundary, and optional HF repair-advisor health. This never represents protocol/tunnel/WireGuard verification.",
