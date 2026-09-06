@@ -10,17 +10,17 @@
   After installation, run Wrangler with `npx wrangler`.
 
 
-Total Upload: 212.57 KiB / gzip: 48.44 KiB
-Worker Startup Time: 13 ms
+Total Upload: 216.80 KiB / gzip: 49.34 KiB
+Worker Startup Time: 15 ms
 Your worker has access to the following bindings:
 - D1 Databases:
   - DM_DB: DM_DB (138a2aef-9f5a-4635-8346-dc474fdfff93)
 - Vars:
   - CF_AIG_GATEWAY_SLUG: "cf-control-mcp"
 Uploaded cf-control-mcp (1.74 sec)
-Deployed cf-control-mcp triggers (0.11 sec)
+Deployed cf-control-mcp triggers (0.06 sec)
   https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-Current Version ID: 99863ab5-9f37-4f29-b64d-ba253fe9c10d
+Current Version ID: ec193f61-eb83-4d67-afdf-b341d4331e73
 
 Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
 === pushing required Worker secrets ===
@@ -128,13 +128,13 @@ PASS: environment:GATEWAY_AUTH_TOKEN — configured
 PASS: environment:CLOUDFLARE_API_TOKEN — configured
 PASS: environment:CLOUDFLARE_ACCOUNT_ID — configured
 PASS: /v1 invalid-token challenge — HTTP 401 invalid_api_key
-PASS: /v1/models — HTTP 200 with expected model set (7 returned)
-PASS: /v1/chat/completions:fast — HTTP 200 real completion; response model=gemini-3.6-flash
-PASS: /v1/chat/completions:coding — HTTP 200 real completion; response model=gemini-3.8-flash
 PASS: D1:providers — HTTP 200; 1 rows
 PASS: D1:models — HTTP 200; 7 rows
 PASS: D1:routing_rules — HTTP 200; 3 rows
-PASS: D1 routing/provider invariants — provider_ok=True; routes={'fast': 'gemini-3.6-flash', 'coding': 'gemini-3.8-flash', 'research': 'gemini-3.8-flash'}
+PASS: /v1/models D1 consistency — HTTP 200; expected=['coding', 'fast', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash', 'research']; returned=['coding', 'fast', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash', 'research']
+PASS: D1 routing/provider invariants — provider_ok=True; routing_targets_registered=True; routes={'fast': 'gemini-3.6-flash', 'coding': 'gemini-3.8-flash', 'research': 'gemini-3.8-flash'}
+PASS: /v1/chat/completions:fast — HTTP 200 real completion; response model=gemini-3.6-flash
+PASS: /v1/chat/completions:coding — HTTP 200 real completion; response model=gemini-3.8-flash
 PASS: AI Gateway authentication — authentication=true
 PASS: BYOK Secrets Store — secret=cf-control-mcp_google-ai-studio_default; active=True; ai_gateway_scope=True; HTTP 200
 PASS: BYOK Provider Config — HTTP 200; matching default config=True
@@ -147,13 +147,13 @@ PASS    | environment:GATEWAY_AUTH_TOKEN | configured
 PASS    | environment:CLOUDFLARE_API_TOKEN | configured
 PASS    | environment:CLOUDFLARE_ACCOUNT_ID | configured
 PASS    | /v1 invalid-token challenge | HTTP 401 invalid_api_key
-PASS    | /v1/models | HTTP 200 with expected model set (7 returned)
-PASS    | /v1/chat/completions:fast | HTTP 200 real completion; response model=gemini-3.6-flash
-PASS    | /v1/chat/completions:coding | HTTP 200 real completion; response model=gemini-3.8-flash
 PASS    | D1:providers | HTTP 200; 1 rows
 PASS    | D1:models | HTTP 200; 7 rows
 PASS    | D1:routing_rules | HTTP 200; 3 rows
-PASS    | D1 routing/provider invariants | provider_ok=True; routes={'fast': 'gemini-3.6-flash', 'coding': 'gemini-3.8-flash', 'research': 'gemini-3.8-flash'}
+PASS    | /v1/models D1 consistency | HTTP 200; expected=['coding', 'fast', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash', 'research']; returned=['coding', 'fast', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash', 'research']
+PASS    | D1 routing/provider invariants | provider_ok=True; routing_targets_registered=True; routes={'fast': 'gemini-3.6-flash', 'coding': 'gemini-3.8-flash', 'research': 'gemini-3.8-flash'}
+PASS    | /v1/chat/completions:fast | HTTP 200 real completion; response model=gemini-3.6-flash
+PASS    | /v1/chat/completions:coding | HTTP 200 real completion; response model=gemini-3.8-flash
 PASS    | AI Gateway authentication | authentication=true
 PASS    | BYOK Secrets Store | secret=cf-control-mcp_google-ai-studio_default; active=True; ai_gateway_scope=True; HTTP 200
 PASS    | BYOK Provider Config | HTTP 200; matching default config=True
