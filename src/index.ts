@@ -386,20 +386,55 @@ async function ghGetRunLog(env: Env, runId: number): Promise<string> {
 	const jobsData = await ghFetch(env, `/repos/${repo}/actions/runs/${runId}/jobs`);
 	const job = (jobsData.jobs ?? [])[0];
 	if (!job) return "(no jobs found for this run yet)";
-	const res = await fetchWithTimeout(
+
+	// GitHub's job-log endpoint returns a temporary redirect to a signed URL.
+	// Cloudflare Workers forwards all headers when redirect="follow", even to a
+	// different hostname, so following automatically would disclose GITHUB_PAT.
+	// Stop at the GitHub redirect, then fetch the signed URL without credentials.
+	const apiResponse = await fetchWithTimeout(
 		`https://api.github.com/repos/${repo}/actions/jobs/${job.id}/logs`,
 		{
+			redirect: "manual",
 			headers: {
 				Authorization: `Bearer ${env.GITHUB_PAT}`,
 				Accept: "application/vnd.github+json",
+				"X-GitHub-Api-Version": "2022-11-28",
 				"User-Agent": "cf-control-mcp",
 			},
 		},
 		GITHUB_TIMEOUT_MS,
-		"GitHub job logs",
+		"GitHub job logs redirect",
 	);
-	if (!res.ok) throw new Error(`GitHub API error (${res.status}) fetching job logs`);
-	const text = await res.text();
+
+	let logResponse = apiResponse;
+	if (apiResponse.status >= 300 && apiResponse.status < 400) {
+		const location = apiResponse.headers.get("location");
+		if (!location) throw new Error(`GitHub job logs redirect (${apiResponse.status}) missing Location header`);
+
+		let signedUrl: URL;
+		try {
+			signedUrl = new URL(location);
+		} catch {
+			throw new Error("GitHub job logs redirect returned an invalid Location URL");
+		}
+		if (signedUrl.protocol !== "https:") {
+			throw new Error("GitHub job logs redirect must use https");
+		}
+
+		logResponse = await fetchWithTimeout(
+			signedUrl.toString(),
+			{ redirect: "follow" },
+			GITHUB_TIMEOUT_MS,
+			"GitHub job logs download",
+		);
+	} else if (!apiResponse.ok) {
+		throw new Error(`GitHub API error (${apiResponse.status}) fetching job logs`);
+	}
+
+	if (!logResponse.ok) {
+		throw new Error(`GitHub job log download error (${logResponse.status})`);
+	}
+	const text = await logResponse.text();
 	return text.length > 60_000 ? `${text.slice(0, 60_000)}\n... [truncated]` : text;
 }
 
