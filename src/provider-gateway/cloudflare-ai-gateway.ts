@@ -21,6 +21,7 @@
 
 import type { ChatCompletionRequest, GatewayEnv } from "./types";
 import { gatewayCorHeaders } from "./auth";
+import { assertModelAvailable, ModelRegistryError, ModelUnavailableError } from "./models";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -57,10 +58,24 @@ export async function resolveModel(model: string, env: GatewayEnv): Promise<stri
 				return rule.model_id;
 			}
 		} catch {
-			// fallback to default aliases if D1 query fails
+			// Preserve legacy alias fallback, but availability is still checked
+			// fail-closed below before any upstream request is made.
 		}
 	}
 	return DEFAULT_ALIASES[model] || model;
+}
+
+/**
+ * Resolve an alias/model and enforce the live D1 enablement registry.
+ *
+ * This makes models.enabled (and provider.enabled) operational rather than
+ * admin-only metadata. A disabled or unregistered model cannot be invoked by
+ * using its raw model ID or by using a routing alias.
+ */
+export async function resolveAvailableModel(model: string, env: GatewayEnv): Promise<string> {
+	const resolved = await resolveModel(model, env);
+	await assertModelAvailable(resolved, env);
+	return resolved;
 }
 
 /**
@@ -138,12 +153,12 @@ async function forwardViaGateway(
 	// on the request always wins over a stored BYOK key — omitting it is
 	// what allows the gateway's own stored Google AI Studio credential
 	// (Secrets Store, `default` alias) to be used server-side.
-	
+
 	// Authenticate Worker → AI Gateway. This is a Cloudflare-side token,
 	// not the Google provider credential.
 	headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN!.trim()}`;
 
-	const resolvedModel = await resolveModel(body.model, env);
+	const resolvedModel = await resolveAvailableModel(body.model, env);
 
 	const upstream = await fetch(url, {
 		method: "POST",
@@ -169,7 +184,7 @@ async function forwardDirect(
 	const apiKey = env.GOOGLE_AI_STUDIO_KEY!;
 	const url = `${GOOGLE_AI_STUDIO_BASE}/chat/completions`;
 
-	const resolvedModel = await resolveModel(body.model, env);
+	const resolvedModel = await resolveAvailableModel(body.model, env);
 
 	const upstream = await fetch(url, {
 		method: "POST",
@@ -242,6 +257,12 @@ export async function handleChatCompletions(request: Request, env: GatewayEnv): 
 		}
 		return await forwardDirect(body, env);
 	} catch (err) {
+		if (err instanceof ModelUnavailableError) {
+			return gatewayError(err.message, "model_not_found", 404);
+		}
+		if (err instanceof ModelRegistryError) {
+			return gatewayError(err.message, "configuration_error", 503);
+		}
 		const message = err instanceof Error ? err.message : String(err);
 		return gatewayError(`Upstream request failed: ${message}`, "server_error", 502);
 	}

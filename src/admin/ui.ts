@@ -1,7 +1,6 @@
 /**
- * v1.8.1 Admin Console — dashboard UI.
- * Single static HTML page, flat/bold design, vanilla JS calling /admin/api/*.
- * Model enable/disable, routing status, enriched overview.
+ * v1.8 Admin Console — dashboard UI. Single static HTML page, flat/bold
+ * design (no gradients/glow), vanilla JS calling the /admin/api/* routes.
  */
 
 export function loginPageHtml(error?: string): string {
@@ -23,45 +22,43 @@ ${error ? `<div class="err">${error}</div>` : ""}
 }
 
 export function dashboardHtml(): string {
-	return `<!doctype html><html><head><meta charset="utf-8"><title>cf-control-mcp admin</title>
+	return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>cf-control-mcp admin</title>
 <style>
-:root{--bg:#0f172a;--panel:#1e293b;--border:#334155;--text:#f1f5f9;--muted:#94a3b8;--accent:#2563eb;--good:#16a34a;--bad:#dc2626;--warn:#d97706}
+:root{--bg:#0f172a;--panel:#1e293b;--panel2:#111827;--border:#334155;--text:#f1f5f9;--muted:#94a3b8;--accent:#2563eb;--good:#16a34a;--bad:#dc2626;--warn:#d97706}
 *{box-sizing:border-box}
-body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);margin:0;min-width:900px}
-header{display:flex;gap:8px;padding:12px 24px;border-bottom:2px solid var(--border);align-items:center;flex-wrap:wrap}
-header h1{font-size:15px;margin:0 16px 0 0;white-space:nowrap}
-nav button{background:none;border:2px solid transparent;color:var(--muted);padding:6px 12px;border-radius:4px;cursor:pointer;font-weight:700;font-size:13px}
+body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);margin:0}
+header{display:flex;gap:14px;padding:14px 24px;border-bottom:2px solid var(--border);align-items:center;position:sticky;top:0;background:var(--bg);z-index:10}
+header h1{font-size:16px;margin:0;white-space:nowrap}
+nav{display:flex;gap:4px;flex-wrap:wrap;flex:1}
+nav button{background:none;border:2px solid transparent;color:var(--muted);padding:7px 11px;border-radius:4px;cursor:pointer;font-weight:700}
 nav button.active{color:var(--text);border-color:var(--accent);background:var(--panel)}
-main{padding:20px 24px}
+.header-action{background:var(--panel);border:1px solid var(--border);color:var(--text);padding:7px 11px;border-radius:4px;cursor:pointer;font-weight:700}
+main{padding:24px;max-width:1500px;margin:0 auto}
 .panel{display:none}
 .panel.active{display:block}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)}
-th{color:var(--muted);font-weight:700;font-size:11px;text-transform:uppercase}
-.badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:700;white-space:nowrap}
-.HEALTHY,.enabled,.active-route{background:var(--good)}
-.NOT_CONFIGURED,.none{background:#475569}
-.AUTH_ERROR,.UPSTREAM_ERROR,.bad{background:var(--bad)}
-.RATE_LIMITED,.DEGRADED,.warn{background:var(--warn)}
-.DISABLED,.disabled,.unavailable{background:#475569;opacity:.7}
-.broken{background:var(--bad);opacity:.7}
-button.btn{border:none;color:#fff;padding:5px 10px;border-radius:4px;cursor:pointer;font-weight:700;font-size:12px;margin-right:4px;white-space:nowrap}
-button.btn:disabled{opacity:.5;cursor:not-allowed}
-button.btn-primary{background:var(--accent)}
-button.btn-danger{background:var(--bad)}
-button.btn-warn{background:var(--warn)}
-button.btn-neutral{background:#334155}
-.notice{padding:8px 12px;border-radius:4px;font-size:12px;font-weight:700;margin:6px 0;display:none}
-.notice.ok{background:rgba(22,163,74,.2);color:#4ade80;display:block}
-.notice.err{background:rgba(220,38,38,.2);color:#f87171;display:block}
-.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}
-.stat{background:var(--panel);border:2px solid var(--border);border-radius:8px;padding:14px}
-.stat-label{font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;margin-bottom:4px}
-.stat-value{font-size:26px;font-weight:700}
-.stat-value.good{color:#4ade80}
-.stat-value.bad{color:#f87171}
-.stat-value.warn{color:#fbbf24}
-input[type=password]{padding:6px;border-radius:4px;border:2px solid var(--border);background:var(--bg);color:var(--text);font-size:13px}
+.panel-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:14px}
+.panel-head h2{margin:0;font-size:20px}.panel-head p{margin:3px 0 0;color:var(--muted);font-size:13px}
+.notice{display:none;margin-bottom:16px;padding:10px 12px;border:1px solid var(--border);border-left-width:4px;background:var(--panel2);border-radius:5px;font-size:13px}
+.notice.show{display:block}.notice.ok{border-left-color:var(--good)}.notice.error{border-left-color:var(--bad)}.notice.warn{border-left-color:var(--warn)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:20px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:7px;padding:14px}.card-label{font-size:11px;color:var(--muted);font-weight:800;text-transform:uppercase}.card-value{font-size:25px;font-weight:800;margin-top:4px}.card-sub{font-size:11px;color:var(--muted);margin-top:3px}
+.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:7px;background:var(--panel)}
+table{width:100%;border-collapse:collapse;min-width:760px}
+th,td{text-align:left;padding:10px;border-bottom:1px solid var(--border);vertical-align:top}
+th{font-size:11px;text-transform:uppercase;color:var(--muted);letter-spacing:.03em;background:rgba(15,23,42,.55);position:sticky;top:0}
+tr:last-child td{border-bottom:none}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#bfdbfe}
+.badge{display:inline-block;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:800;white-space:nowrap}
+.HEALTHY,.ACTIVE,.AVAILABLE{background:var(--good)}
+.NOT_CONFIGURED,.DISABLED{background:#475569}
+.AUTH_ERROR,.UPSTREAM_ERROR,.BROKEN{background:var(--bad)}
+.RATE_LIMITED,.DEGRADED,.MODEL_DISABLED,.PROVIDER_DISABLED{background:var(--warn)}
+.actions{display:flex;gap:6px;flex-wrap:wrap}
+button.action{background:var(--accent);border:none;color:#fff;padding:6px 10px;border-radius:4px;cursor:pointer;font-weight:750;white-space:nowrap}
+button.action.secondary{background:#475569}button.action.danger{background:var(--bad)}button.action.warn{background:var(--warn)}
+button.action:disabled,.header-action:disabled{opacity:.5;cursor:not-allowed}
+.muted{color:var(--muted)}.small{font-size:12px}.alias-list{display:flex;gap:4px;flex-wrap:wrap}.alias{background:#334155;border-radius:3px;padding:2px 6px;font-size:11px}
+input[type=password]{padding:6px;border-radius:4px;border:2px solid var(--border);background:var(--bg);color:var(--text)}
+@media(max-width:900px){header{align-items:flex-start;flex-wrap:wrap}main{padding:14px}.panel-head{align-items:flex-start;flex-direction:column}table{min-width:700px}}
 </style></head><body>
 <header>
 <h1>cf-control-mcp — Admin</h1>
@@ -75,292 +72,306 @@ input[type=password]{padding:6px;border-radius:4px;border:2px solid var(--border
 <button data-tab="logs">Logs</button>
 <button data-tab="settings">Settings</button>
 </nav>
-<div style="margin-left:auto">
-<form method="POST" action="/admin/logout" style="display:inline">
-<button class="btn btn-neutral" type="submit">Sign out</button>
-</form>
-</div>
+<button id="refresh-all" class="header-action">Refresh</button>
 </header>
 <main>
+<div id="notice" class="notice"></div>
 
 <section id="overview" class="panel active">
-  <div class="stat-grid">
-    <div class="stat"><div class="stat-label">Providers</div><div id="stat-providers" class="stat-value">—</div></div>
-    <div class="stat"><div class="stat-label">Enabled Providers</div><div id="stat-providers-enabled" class="stat-value good">—</div></div>
-    <div class="stat"><div class="stat-label">Healthy</div><div id="stat-healthy" class="stat-value good">—</div></div>
-    <div class="stat"><div class="stat-label">Total Models</div><div id="stat-models" class="stat-value">—</div></div>
-    <div class="stat"><div class="stat-label">Available Models</div><div id="stat-models-enabled" class="stat-value good">—</div></div>
-    <div class="stat"><div class="stat-label">Disabled Models</div><div id="stat-models-disabled" class="stat-value warn">—</div></div>
-    <div class="stat"><div class="stat-label">Routing Rules</div><div id="stat-rules" class="stat-value">—</div></div>
-    <div class="stat"><div class="stat-label">Active Aliases</div><div id="stat-routes-active" class="stat-value good">—</div></div>
-    <div class="stat"><div class="stat-label">Unavailable Aliases</div><div id="stat-routes-unavail" class="stat-value warn">—</div></div>
+  <div class="panel-head"><div><h2>Operational Overview</h2><p>Effective runtime availability from D1 control state.</p></div></div>
+  <div class="cards">
+    <div class="card"><div class="card-label">Providers enabled</div><div id="stat-providers" class="card-value">—</div><div id="stat-providers-sub" class="card-sub">—</div></div>
+    <div class="card"><div class="card-label">Healthy providers</div><div id="stat-healthy" class="card-value">—</div></div>
+    <div class="card"><div class="card-label">Models available</div><div id="stat-models" class="card-value">—</div><div id="stat-models-sub" class="card-sub">—</div></div>
+    <div class="card"><div class="card-label">Disabled models</div><div id="stat-disabled-models" class="card-value">—</div></div>
+    <div class="card"><div class="card-label">Active aliases</div><div id="stat-active-routes" class="card-value">—</div><div id="stat-routes-sub" class="card-sub">—</div></div>
+    <div class="card"><div class="card-label">Unavailable aliases</div><div id="stat-unavailable-routes" class="card-value">—</div></div>
   </div>
-  <p id="overview-body" style="color:var(--muted);font-size:13px">Loading…</p>
+  <p id="overview-body" class="muted">Loading…</p>
 </section>
 
 <section id="providers" class="panel">
-  <div id="providers-notice" class="notice"></div>
-  <table>
-    <thead><tr><th>Provider</th><th>Enabled</th><th>Health</th><th>BYOK Alias</th><th>Last check</th><th>Latency</th><th>Actions</th></tr></thead>
-    <tbody id="providers-body"></tbody>
-  </table>
+  <div class="panel-head"><div><h2>Providers</h2><p>Provider enablement is runtime-authoritative for every model owned by that provider.</p></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Provider</th><th>Runtime</th><th>Health</th><th>Models</th><th>Routing impact</th><th>BYOK</th><th>Last result</th><th>Actions</th></tr></thead>
+    <tbody id="providers-body"><tr><td colspan="8" class="muted">Loading…</td></tr></tbody>
+  </table></div>
 </section>
 
 <section id="models" class="panel">
-  <div id="models-notice" class="notice"></div>
-  <table>
-    <thead><tr><th>Model ID</th><th>Provider</th><th>Public Alias</th><th>Status</th><th>Actions</th></tr></thead>
-    <tbody id="models-body"></tbody>
-  </table>
+  <div class="panel-head"><div><h2>Models</h2><p>Enable/Disable writes to D1 and immediately controls /v1/models and chat completions.</p></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Model ID</th><th>Provider</th><th>Configured</th><th>Effective runtime</th><th>Used by aliases</th><th>Actions</th></tr></thead>
+    <tbody id="models-body"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
+  </table></div>
 </section>
 
 <section id="routing" class="panel">
-  <table>
-    <thead><tr><th>Alias</th><th>Target Model</th><th>State</th><th>Updated At</th></tr></thead>
-    <tbody id="routing-body"></tbody>
-  </table>
+  <div class="panel-head"><div><h2>Routing</h2><p>Routes remain configured when a target is disabled; operational state is shown explicitly.</p></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Alias</th><th>Target model</th><th>Provider</th><th>Operational state</th><th>Updated</th></tr></thead>
+    <tbody id="routing-body"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+  </table></div>
 </section>
 
 <section id="health" class="panel">
-  <table>
+  <div class="panel-head"><div><h2>Health History</h2><p>Recorded provider health checks.</p></div></div>
+  <div class="table-wrap"><table>
     <thead><tr><th>Checked At</th><th>Provider</th><th>State</th><th>Latency</th><th>Detail</th></tr></thead>
     <tbody id="health-body"></tbody>
-  </table>
+  </table></div>
 </section>
 
 <section id="usage" class="panel">
-  <div style="background:var(--panel);border:2px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px">
-    <h3 style="margin:0 0 8px;font-size:14px">Audit Events</h3>
-    <div id="usage-body">Loading…</div>
-  </div>
+  <div class="panel-head"><div><h2>Usage</h2><p>Admin/audit activity and gateway observability pointers.</p></div></div>
+  <div class="card"><div id="usage-body">Loading…</div></div>
 </section>
 
 <section id="logs" class="panel">
-  <table>
+  <div class="panel-head"><div><h2>Audit Log</h2><p>Recent control-plane actions.</p></div></div>
+  <div class="table-wrap"><table>
     <thead><tr><th>Time</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead>
     <tbody id="logs-body"></tbody>
-  </table>
+  </table></div>
 </section>
 
 <section id="settings" class="panel">
-  <div style="background:var(--panel);border:2px solid var(--border);border-radius:8px;padding:20px;max-width:540px">
-    <h3 style="margin:0 0 16px;font-size:14px">System Configuration</h3>
-    <div id="settings-body">Loading…</div>
-  </div>
+  <div class="panel-head"><div><h2>Settings</h2><p>Bound runtime metadata; secret values are never displayed.</p></div></div>
+  <div class="card" style="max-width:640px"><div id="settings-body">Loading…</div></div>
 </section>
 </main>
-
 <script>
-// ---- tab navigation ----
-document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>{
-  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
-  document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
-  b.classList.add('active');
-  document.getElementById(b.dataset.tab).classList.add('active');
-  const loaders={providers:loadProviders,models:loadModels,routing:loadRouting,health:loadHealth,usage:loadUsage,logs:loadLogs,settings:loadSettings};
-  if(loaders[b.dataset.tab]) loaders[b.dataset.tab]();
-}));
+const noticeEl = document.getElementById('notice');
+let noticeTimer = null;
 
-// ---- helpers ----
-async function api(path,opts={}){
-  const r=await fetch(path,opts);
-  return {status:r.status,data:await r.json()};
+function esc(value){
+  return String(value == null ? '' : value)
+    .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+    .replaceAll('"','&quot;').replaceAll("'",'&#39;');
+}
+function showNotice(message, kind){
+  clearTimeout(noticeTimer);
+  noticeEl.textContent = message;
+  noticeEl.className = 'notice show ' + (kind || 'ok');
+  noticeTimer = setTimeout(function(){ noticeEl.className='notice'; }, 6500);
+}
+async function api(path, opts){
+  const response = await fetch(path, opts);
+  let data = {};
+  try { data = await response.json(); } catch { data = {}; }
+  if(!response.ok){
+    const err = new Error(data.error || ('HTTP_'+response.status));
+    err.status = response.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+function aliasHtml(list){
+  if(!list || !list.length) return '<span class="muted">none</span>';
+  return '<div class="alias-list">' + list.map(function(a){return '<span class="alias">'+esc(a)+'</span>';}).join('') + '</div>';
+}
+function setBusy(button, busy, busyText){
+  if(!button) return;
+  if(busy){ button.dataset.oldText = button.textContent; button.textContent = busyText || 'Working…'; button.disabled = true; }
+  else { button.textContent = button.dataset.oldText || button.textContent; button.disabled = false; }
 }
 
-function showNotice(elId,msg,isErr){
-  const el=document.getElementById(elId);
-  if(!el)return;
-  el.textContent=msg;
-  el.className='notice '+(isErr?'err':'ok');
-  setTimeout(()=>{el.className='notice';},4000);
+async function refreshOperational(){
+  await Promise.all([loadOverview(), loadProviders(), loadModels(), loadRouting()]);
 }
 
-// ---- overview ----
+document.querySelectorAll('nav button').forEach(function(button){
+  button.addEventListener('click',function(){
+    document.querySelectorAll('nav button').forEach(function(x){x.classList.remove('active');});
+    document.querySelectorAll('.panel').forEach(function(x){x.classList.remove('active');});
+    button.classList.add('active');
+    document.getElementById(button.dataset.tab).classList.add('active');
+    if(button.dataset.tab==='overview') loadOverview();
+    if(button.dataset.tab==='providers') loadProviders();
+    if(button.dataset.tab==='models') loadModels();
+    if(button.dataset.tab==='routing') loadRouting();
+    if(button.dataset.tab==='health') loadHealth();
+    if(button.dataset.tab==='usage') loadUsage();
+    if(button.dataset.tab==='logs') loadLogs();
+    if(button.dataset.tab==='settings') loadSettings();
+  });
+});
+document.getElementById('refresh-all').addEventListener('click', async function(){
+  const button=this; setBusy(button,true,'Refreshing…');
+  try { await Promise.all([refreshOperational(), loadHealth(), loadLogs()]); showNotice('Admin state refreshed.','ok'); }
+  catch(err){ showNotice('Refresh failed: '+err.message,'error'); }
+  finally { setBusy(button,false); }
+});
+
 async function loadOverview(){
-  const {data:d}=await api('/admin/api/overview');
-  document.getElementById('stat-providers').textContent=d.providerCount??0;
-  document.getElementById('stat-providers-enabled').textContent=d.enabledProviderCount??0;
-  document.getElementById('stat-healthy').textContent=d.healthyCount??0;
-  document.getElementById('stat-models').textContent=d.modelCount??0;
-  document.getElementById('stat-models-enabled').textContent=d.enabledModelCount??0;
-  document.getElementById('stat-models-disabled').textContent=d.disabledModelCount??0;
-  document.getElementById('stat-rules').textContent=d.routingRuleCount??0;
-  document.getElementById('stat-routes-active').textContent=d.activeRoutingCount??0;
-  document.getElementById('stat-routes-unavail').textContent=d.unavailableRoutingCount??0;
-  const unavail=d.unavailableRoutingCount??0;
-  const disabledM=d.disabledModelCount??0;
-  let status='System operational.';
-  if(unavail>0) status+=' ⚠ '+unavail+' routing alias(es) unavailable.';
-  if(disabledM>0) status+=' '+disabledM+' model(s) disabled.';
-  document.getElementById('overview-body').textContent=status;
+  const d = await api('/admin/api/overview');
+  document.getElementById('stat-providers').textContent = (d.enabledProviderCount ?? 0) + '/' + (d.providerCount ?? 0);
+  document.getElementById('stat-providers-sub').textContent = 'enabled / registered';
+  document.getElementById('stat-healthy').textContent = d.healthyCount ?? 0;
+  document.getElementById('stat-models').textContent = (d.availableModelCount ?? 0) + '/' + (d.modelCount ?? 0);
+  document.getElementById('stat-models-sub').textContent = 'available / registered';
+  document.getElementById('stat-disabled-models').textContent = d.disabledModelCount ?? 0;
+  document.getElementById('stat-active-routes').textContent = d.activeRoutingAliasCount ?? 0;
+  document.getElementById('stat-routes-sub').textContent = 'of ' + (d.routingRuleCount ?? 0) + ' configured';
+  document.getElementById('stat-unavailable-routes').textContent = d.unavailableRoutingAliasCount ?? 0;
+  document.getElementById('overview-body').textContent = (d.availableModelCount ?? 0) + ' model(s) are currently callable through ' + (d.activeRoutingAliasCount ?? 0) + ' active alias(es).';
 }
 
-// ---- providers ----
 async function loadProviders(){
-  const {data:d}=await api('/admin/api/providers');
-  const rows=(d.providers||[]).map(p=>\`<tr>
-    <td><strong>\${p.display_name}</strong><br><small style="color:var(--muted)">\${p.id}</small></td>
-    <td><span class="badge \${p.enabled?'enabled':'disabled'}">\${p.enabled?'enabled':'disabled'}</span></td>
-    <td><span class="badge \${p.health_state}">\${p.health_state}</span></td>
-    <td>\${p.byok_alias?\`<span class="badge HEALTHY">\${p.byok_alias}</span>\`:'<span class="badge none">none</span>'}</td>
-    <td style="font-size:11px">\${p.last_success_at||(p.last_error_at||'—')}<br><span style="color:#f87171">\${p.last_error_message||''}</span></td>
-    <td>\${p.last_latency_ms!=null?p.last_latency_ms+'ms':'—'}</td>
-    <td>
-      <button class="btn btn-primary" id="ptoggle-\${p.id}" onclick="toggleProvider('\${p.id}',\${p.enabled?0:1})">\${p.enabled?'Disable':'Enable'}</button>
-      <button class="btn btn-neutral" onclick="testProvider('\${p.id}')">Test health</button>
-      <button class="btn btn-warn" onclick="rotateCred('\${p.id}')">\${p.byok_alias?'Rotate':'Set'} key</button>
-      \${p.byok_alias?\`<button class="btn btn-danger" onclick="deleteCred('\${p.id}')">Delete key</button>\`:''}
-    </td>
-  </tr>\`).join('');
-  document.getElementById('providers-body').innerHTML=rows||'<tr><td colspan="7">No providers found.</td></tr>';
-}
-
-async function toggleProvider(id,enabled){
-  const btn=document.getElementById('ptoggle-'+id);
-  if(btn){btn.disabled=true;btn.textContent='…';}
-  const {status,data}=await api('/admin/api/providers/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!!enabled})});
-  if(status===200&&data.ok){
-    showNotice('providers-notice','Provider '+(enabled?'enabled':'disabled')+': '+id,false);
-  } else {
-    showNotice('providers-notice','Error: '+(data.error||'unknown'),true);
-  }
-  await loadProviders();
-  loadOverview();
-}
-
-async function testProvider(id){
-  const {status,data}=await api('/admin/api/providers/'+id+'/health-test',{method:'POST'});
-  if(status===200){showNotice('providers-notice','Health test for '+id+': '+data.state,data.state!=='HEALTHY');}
-  else{showNotice('providers-notice','Error: '+(data.error||'unknown'),true);}
-  loadProviders();
-}
-
-async function rotateCred(id){
-  const value=prompt('Paste the new API key for '+id+'\\n(sent directly to Cloudflare, never stored here):');
-  if(!value)return;
-  const {status,data}=await api('/admin/api/providers/'+id+'/credential',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value})});
-  if(status===200&&data.ok){showNotice('providers-notice','Credential set for '+id+'. Health: '+data.healthState,false);}
-  else{showNotice('providers-notice','Failed: '+(data.error||'unknown'),true);}
-  loadProviders();
-}
-
-async function deleteCred(id){
-  if(!confirm('Delete credential for '+id+'? This will disable provider functionality.'))return;
-  const {status,data}=await api('/admin/api/providers/'+id+'/credential',{method:'DELETE'});
-  if(status===200&&data.ok){showNotice('providers-notice','Credential deleted for '+id,false);}
-  else{showNotice('providers-notice','Failed: '+(data.error||'unknown'),true);}
-  loadProviders();
-}
-
-// ---- models ----
-async function loadModels(){
-  const {data:d}=await api('/admin/api/models');
-  const rows=(d.models||[]).map(m=>{
-    const enabled=!!m.enabled;
-    return \`<tr>
-      <td><code>\${m.id}</code></td>
-      <td><small>\${m.provider_id}</small></td>
-      <td>\${m.public_alias?\`<span class="badge HEALTHY">\${m.public_alias}</span>\`:'<span style="color:var(--muted)">—</span>'}</td>
-      <td><span class="badge \${enabled?'enabled':'disabled'}">\${enabled?'active':'disabled'}</span></td>
-      <td>
-        <button class="btn \${enabled?'btn-danger':'btn-primary'}" id="mtoggle-\${m.id}"
-          onclick="toggleModel('\${m.id}',\${enabled?0:1})">\${enabled?'Disable':'Enable'}</button>
-      </td>
-    </tr>\`;
+  const d = await api('/admin/api/providers');
+  const rows = (d.providers || []).map(function(p){
+    const status = p.enabled ? 'HEALTHY' : 'DISABLED';
+    return '<tr>'+
+      '<td><strong>'+esc(p.display_name)+'</strong><br><code>'+esc(p.id)+'</code></td>'+
+      '<td><span class="badge '+status+'">'+(p.enabled?'enabled':'disabled')+'</span></td>'+
+      '<td><span class="badge '+esc(p.health_state)+'">'+esc(p.health_state)+'</span></td>'+
+      '<td>'+esc(p.enabled_model_count)+' / '+esc(p.model_count)+' enabled</td>'+
+      '<td>'+aliasHtml(p.routing_aliases)+'</td>'+
+      '<td>'+(p.byok_alias?'<span class="badge HEALTHY">'+esc(p.byok_alias)+'</span>':'<span class="badge NOT_CONFIGURED">none</span>')+'</td>'+
+      '<td><span class="small">'+esc(p.last_success_at || '—')+'</span><br><span class="muted small">'+esc(p.last_error_message || '')+'</span></td>'+
+      '<td><div class="actions">'+
+        '<button class="action '+(p.enabled?'warn':'')+'" data-provider-action="toggle" data-id="'+esc(p.id)+'" data-enable="'+(!p.enabled)+'">'+(p.enabled?'Disable':'Enable')+'</button>'+
+        '<button class="action secondary" data-provider-action="health" data-id="'+esc(p.id)+'">Health test</button>'+
+        '<button class="action secondary" data-provider-action="credential" data-id="'+esc(p.id)+'">'+(p.byok_alias?'Rotate':'Set')+' credential</button>'+
+        (p.byok_alias?'<button class="action danger" data-provider-action="delete-credential" data-id="'+esc(p.id)+'">Delete credential</button>':'')+
+      '</div></td></tr>';
   }).join('');
-  document.getElementById('models-body').innerHTML=rows||'<tr><td colspan="5">No models registered.</td></tr>';
+  document.getElementById('providers-body').innerHTML = rows || '<tr><td colspan="8" class="muted">No providers found.</td></tr>';
 }
 
-async function toggleModel(id,enabled){
-  const btn=document.getElementById('mtoggle-'+id);
-  if(btn){btn.disabled=true;btn.textContent='…';}
-  const {status,data}=await api('/admin/api/models/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!!enabled})});
-  if(status===200&&data.ok){
-    const aliases=data.affectedAliases||[];
-    let msg='Model '+(enabled?'enabled':'disabled')+': '+id;
-    if(aliases.length>0) msg+=' | Affected aliases: '+aliases.join(', ');
-    showNotice('models-notice',msg,false);
-  } else {
-    showNotice('models-notice','Error: '+(data.error||'unknown'),true);
-  }
-  await loadModels();
-  loadRouting();
-  loadOverview();
-}
-
-// ---- routing ----
-function routeStatus(r){
-  if(r.model_enabled==null) return {cls:'broken',label:'BROKEN — model missing'};
-  if(!r.model_enabled) return {cls:'unavailable',label:'UNAVAILABLE — model disabled'};
-  if(!r.provider_enabled) return {cls:'unavailable',label:'UNAVAILABLE — provider disabled'};
-  return {cls:'active-route',label:'active'};
+async function loadModels(){
+  const d = await api('/admin/api/models');
+  const rows = (d.models || []).map(function(m){
+    let runtimeState = 'AVAILABLE';
+    let runtimeText = 'available';
+    if(!m.enabled){ runtimeState='DISABLED'; runtimeText='model disabled'; }
+    else if(!m.provider_enabled){ runtimeState='PROVIDER_DISABLED'; runtimeText='provider disabled'; }
+    return '<tr>'+
+      '<td><code>'+esc(m.id)+'</code></td>'+
+      '<td>'+esc(m.provider_id)+'</td>'+
+      '<td><span class="badge '+(m.enabled?'HEALTHY':'DISABLED')+'">'+(m.enabled?'enabled':'disabled')+'</span></td>'+
+      '<td><span class="badge '+runtimeState+'">'+runtimeText+'</span></td>'+
+      '<td>'+aliasHtml(m.routing_aliases)+'</td>'+
+      '<td><div class="actions"><button class="action '+(m.enabled?'warn':'')+'" data-model-action="toggle" data-id="'+esc(m.id)+'" data-enable="'+(!m.enabled)+'">'+(m.enabled?'Disable':'Enable')+'</button></div></td>'+
+    '</tr>';
+  }).join('');
+  document.getElementById('models-body').innerHTML = rows || '<tr><td colspan="6" class="muted">No models registered.</td></tr>';
 }
 
 async function loadRouting(){
-  const {data:d}=await api('/admin/api/routing');
-  const rows=(d.rules||[]).map(r=>{
-    const s=routeStatus(r);
-    return \`<tr>
-      <td><strong>\${r.public_alias}</strong></td>
-      <td><code>\${r.model_id}</code>\${r.provider_id?'<br><small style="color:var(--muted)">via '+r.provider_id+'</small>':''}</td>
-      <td><span class="badge \${s.cls}">\${s.label}</span></td>
-      <td style="font-size:11px;color:var(--muted)">\${r.updated_at}</td>
-    </tr>\`;
+  const d = await api('/admin/api/routing');
+  const rows = (d.rules || []).map(function(r){
+    return '<tr>'+
+      '<td><strong>'+esc(r.public_alias)+'</strong></td>'+
+      '<td><code>'+esc(r.model_id)+'</code></td>'+
+      '<td>'+esc(r.provider_id || '—')+'</td>'+
+      '<td><span class="badge '+esc(r.state)+'">'+esc(r.state)+'</span></td>'+
+      '<td>'+esc(r.updated_at)+'</td>'+
+    '</tr>';
   }).join('');
-  document.getElementById('routing-body').innerHTML=rows||'<tr><td colspan="4">No routing rules configured.</td></tr>';
+  document.getElementById('routing-body').innerHTML = rows || '<tr><td colspan="5" class="muted">No routing rules configured.</td></tr>';
 }
 
-// ---- health ----
 async function loadHealth(){
-  const {data:d}=await api('/admin/api/health');
-  const rows=(d.checks||[]).map(c=>\`<tr>
-    <td style="font-size:11px">\${c.checked_at}</td>
-    <td>\${c.provider_id}</td>
-    <td><span class="badge \${c.state}">\${c.state}</span></td>
-    <td>\${c.latency_ms!=null?c.latency_ms+'ms':'—'}</td>
-    <td style="font-size:11px;color:var(--muted)">\${c.error_message||'OK'}</td>
-  </tr>\`).join('');
-  document.getElementById('health-body').innerHTML=rows||'<tr><td colspan="5">No health check history recorded.</td></tr>';
+  const d = await api('/admin/api/health');
+  const rows = (d.checks || []).map(function(c){
+    return '<tr><td>'+esc(c.checked_at)+'</td><td>'+esc(c.provider_id)+'</td><td><span class="badge '+esc(c.state)+'">'+esc(c.state)+'</span></td><td>'+esc(c.latency_ms ? c.latency_ms+'ms' : '—')+'</td><td><span class="muted small">'+esc(c.error_message || 'OK')+'</span></td></tr>';
+  }).join('');
+  document.getElementById('health-body').innerHTML = rows || '<tr><td colspan="5" class="muted">No health check history recorded.</td></tr>';
 }
 
-// ---- usage ----
 async function loadUsage(){
-  const {data:d}=await api('/admin/api/usage');
-  document.getElementById('usage-body').innerHTML=\`
-    <p>Total recorded admin events: <strong>\${d.totalAuditEvents}</strong></p>
-    <p style="color:var(--muted);font-size:12px">Real-time gateway usage is available in Cloudflare AI Gateway analytics.</p>
-  \`;
+  const d = await api('/admin/api/usage');
+  document.getElementById('usage-body').innerHTML = '<p>Total recorded audit/admin events: <strong>'+esc(d.totalAuditEvents)+'</strong></p><p class="muted">Real-time gateway usage is streamed through Cloudflare AI Gateway analytics.</p>';
 }
 
-// ---- logs ----
 async function loadLogs(){
-  const {data:d}=await api('/admin/api/logs');
-  document.getElementById('logs-body').innerHTML=(d.events||[]).map(e=>\`<tr>
-    <td style="font-size:11px;white-space:nowrap">\${e.at}</td>
-    <td><code style="font-size:11px">\${e.action}</code></td>
-    <td style="font-size:11px">\${e.target||'—'}</td>
-    <td style="font-size:11px;color:var(--muted)">\${e.detail||'—'}</td>
-  </tr>\`).join('')||'<tr><td colspan="4">No events recorded.</td></tr>';
+  const d = await api('/admin/api/logs');
+  document.getElementById('logs-body').innerHTML = (d.events || []).map(function(e){
+    return '<tr><td>'+esc(e.at)+'</td><td><code>'+esc(e.action)+'</code></td><td>'+esc(e.target||'—')+'</td><td><span class="small">'+esc(e.detail||'—')+'</span></td></tr>';
+  }).join('') || '<tr><td colspan="4" class="muted">No audit events recorded.</td></tr>';
 }
 
-// ---- settings ----
 async function loadSettings(){
-  const {data:d}=await api('/admin/api/settings');
-  document.getElementById('settings-body').innerHTML=\`
-    <table style="border:none;font-size:13px">
-      <tr><td style="border:none;color:var(--muted);padding:6px 12px 6px 0">Version</td><td style="border:none"><strong>v\${d.version}</strong></td></tr>
-      <tr><td style="border:none;color:var(--muted);padding:6px 12px 6px 0">Gateway Slug</td><td style="border:none"><code>\${d.gatewaySlug}</code></td></tr>
-      <tr><td style="border:none;color:var(--muted);padding:6px 12px 6px 0">Account ID</td><td style="border:none"><code>\${d.accountIdMasked}</code></td></tr>
-      <tr><td style="border:none;color:var(--muted);padding:6px 12px 6px 0">Metadata Store</td><td style="border:none"><code>\${d.d1Database} (D1)</code></td></tr>
-      <tr><td style="border:none;color:var(--muted);padding:6px 12px 6px 0">CF Token</td><td style="border:none"><span class="badge \${d.hasCfToken?'HEALTHY':'DISABLED'}">\${d.hasCfToken?'configured':'missing'}</span></td></tr>
-      <tr><td style="border:none;color:var(--muted);padding:6px 12px 6px 0">Gateway Auth</td><td style="border:none"><span class="badge \${d.hasGatewayAuth?'HEALTHY':'DISABLED'}">\${d.hasGatewayAuth?'configured':'missing'}</span></td></tr>
-      <tr><td style="border:none;color:var(--muted);padding:6px 12px 6px 0">Owner Auth</td><td style="border:none"><span class="badge \${d.hasMcpAuth?'HEALTHY':'DISABLED'}">\${d.hasMcpAuth?'configured':'missing'}</span></td></tr>
-    </table>
-  \`;
+  const d = await api('/admin/api/settings');
+  document.getElementById('settings-body').innerHTML = '<table style="min-width:0">'+
+    '<tr><td class="muted">Version</td><td><strong>v'+esc(d.version)+'</strong></td></tr>'+
+    '<tr><td class="muted">Gateway Slug</td><td><code>'+esc(d.gatewaySlug)+'</code></td></tr>'+
+    '<tr><td class="muted">Account ID</td><td><code>'+esc(d.accountIdMasked)+'</code></td></tr>'+
+    '<tr><td class="muted">Metadata Store</td><td><code>'+esc(d.d1Database)+' (D1)</code></td></tr>'+
+    '<tr><td class="muted">CF Token Bound</td><td><span class="badge '+(d.hasCfToken?'HEALTHY':'DISABLED')+'">'+(d.hasCfToken?'configured':'missing')+'</span></td></tr>'+
+    '<tr><td class="muted">Gateway Auth Bound</td><td><span class="badge '+(d.hasGatewayAuth?'HEALTHY':'DISABLED')+'">'+(d.hasGatewayAuth?'configured':'missing')+'</span></td></tr>'+
+    '<tr><td class="muted">Owner Auth Bound</td><td><span class="badge '+(d.hasMcpAuth?'HEALTHY':'DISABLED')+'">'+(d.hasMcpAuth?'configured':'missing')+'</span></td></tr></table>';
 }
 
-loadOverview();
-loadProviders();
+document.getElementById('models-body').addEventListener('click', async function(event){
+  const button = event.target.closest('button[data-model-action]');
+  if(!button) return;
+  const id = button.dataset.id;
+  const enabled = button.dataset.enable === 'true';
+  if(!enabled){
+    const row = button.closest('tr');
+    const aliasText = row && row.children[4] ? row.children[4].textContent.trim() : '';
+    if(aliasText && aliasText !== 'none' && !confirm('Disable '+id+'? Routing aliases using this model will become unavailable until it is re-enabled.')) return;
+  }
+  setBusy(button,true,enabled?'Enabling…':'Disabling…');
+  try{
+    const result = await api('/admin/api/models/'+encodeURIComponent(id), {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:enabled})});
+    const affected = result.affectedAliases || [];
+    showNotice((enabled?'Enabled ':'Disabled ')+id+(affected.length?' — affected aliases: '+affected.join(', '):''), affected.length && !enabled ? 'warn' : 'ok');
+    await Promise.all([loadModels(),loadRouting(),loadOverview(),loadLogs()]);
+  }catch(err){ showNotice('Model update failed: '+err.message,'error'); }
+  finally{ setBusy(button,false); }
+});
+
+document.getElementById('providers-body').addEventListener('click', async function(event){
+  const button = event.target.closest('button[data-provider-action]');
+  if(!button) return;
+  const id = button.dataset.id;
+  const action = button.dataset.providerAction;
+
+  if(action==='toggle'){
+    const enabled = button.dataset.enable === 'true';
+    if(!enabled && !confirm('Disable provider '+id+'? All enabled models and routing aliases backed by this provider will become unavailable.')) return;
+    setBusy(button,true,enabled?'Enabling…':'Disabling…');
+    try{
+      const result = await api('/admin/api/providers/'+encodeURIComponent(id), {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:enabled})});
+      showNotice((enabled?'Enabled ':'Disabled ')+id+'. Runtime availability refreshed.', enabled?'ok':'warn');
+      await Promise.all([loadProviders(),loadModels(),loadRouting(),loadOverview(),loadLogs()]);
+    }catch(err){ showNotice('Provider update failed: '+err.message,'error'); }
+    finally{ setBusy(button,false); }
+    return;
+  }
+
+  if(action==='health'){
+    setBusy(button,true,'Testing…');
+    try{ const result=await api('/admin/api/providers/'+encodeURIComponent(id)+'/health-test',{method:'POST'}); showNotice(id+' health: '+result.state,(result.state==='HEALTHY'?'ok':'warn')); await Promise.all([loadProviders(),loadHealth(),loadOverview(),loadLogs()]); }
+    catch(err){ showNotice('Health test failed: '+err.message,'error'); }
+    finally{ setBusy(button,false); }
+    return;
+  }
+
+  if(action==='credential'){
+    const value = prompt('Paste the new API key for '+id+' (sent directly to Cloudflare; never rendered back by this console):');
+    if(!value) return;
+    setBusy(button,true,'Saving…');
+    try{ const result=await api('/admin/api/providers/'+encodeURIComponent(id)+'/credential',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:value})}); showNotice('Credential updated for '+id+'. Health: '+(result.healthState||'unknown'),'ok'); await Promise.all([loadProviders(),loadHealth(),loadLogs()]); }
+    catch(err){ showNotice('Credential update failed: '+err.message,'error'); }
+    finally{ setBusy(button,false); }
+    return;
+  }
+
+  if(action==='delete-credential'){
+    if(!confirm('Delete credential for '+id+'?')) return;
+    setBusy(button,true,'Deleting…');
+    try{ await api('/admin/api/providers/'+encodeURIComponent(id)+'/credential',{method:'DELETE'}); showNotice('Credential deleted for '+id+'.','warn'); await Promise.all([loadProviders(),loadHealth(),loadLogs()]); }
+    catch(err){ showNotice('Credential delete failed: '+err.message,'error'); }
+    finally{ setBusy(button,false); }
+  }
+});
+
+refreshOperational().catch(function(err){showNotice('Initial load failed: '+err.message,'error');});
 </script>
 </body></html>`;
 }
