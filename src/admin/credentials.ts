@@ -109,11 +109,31 @@ export async function setProviderCredential(
 	// Step 2: Idempotent Provider Config linkage
 	const pcUrl = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai-gateway/gateways/${env.CF_AIG_GATEWAY_SLUG}/provider_configs`;
 	const getPcRes = await fetch(pcUrl, { headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` } });
-	const getPcData = await getPcRes.json<{ success: boolean; result?: Array<{ id: string; provider_slug: string; alias: string }> }>();
+	const getPcData = await getPcRes.json<{ success: boolean; result?: Array<{ id: string; provider_slug: string; alias: string; default_config?: boolean }> }>();
 	const existingConfig = getPcData.result?.find((c) => c.provider_slug === providerSlug && c.alias === alias);
 
 	if (existingConfig) {
-		return { ok: true, configured: true, providerConfigLinked: true, secretId };
+		if (existingConfig.default_config === true) {
+			return { ok: true, configured: true, providerConfigLinked: true, secretId };
+		}
+
+		// Existing config was found but is NOT flagged as the account default.
+		// Previously this branch returned early here, silently leaving BYOK
+		// requests unresolved against this credential (production acceptance
+		// gate "BYOK Provider Config" failed with matching default config=False).
+		// Reconcile it instead of trusting mere existence.
+		const patchPcRes = await fetch(`${pcUrl}/${existingConfig.id}`, {
+			method: "PATCH",
+			headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`, "Content-Type": "application/json" },
+			body: JSON.stringify({ default_config: true }),
+		});
+		const patchPcData = await patchPcRes.json<{ success: boolean; errors?: Array<{ message: string }> }>();
+		if (patchPcRes.ok && patchPcData.success) {
+			return { ok: true, configured: true, providerConfigLinked: true, secretId };
+		}
+
+		const msg = patchPcData.errors?.map((e) => e.message).join("; ") || `HTTP ${patchPcRes.status}`;
+		return { ok: false, configured: true, providerConfigLinked: false, error: `existing provider config not marked default; PATCH failed: ${msg}` };
 	}
 
 	const postPcRes = await fetch(pcUrl, {
