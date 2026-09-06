@@ -20,6 +20,7 @@
  */
 
 import { internetTools } from "./internet/tools";
+import { judge0Execute, judge0Runtimes } from "./code-execution/judge0";
 
 export interface Env {
 	MCP_AUTH_TOKEN: string;
@@ -33,6 +34,14 @@ export interface Env {
 	GITHUB_PAT?: string;
 	/** Optional. "owner/repo" that hosts .github/workflows/mcp-exec.yml. Defaults to nimazasinich/cf-control-mcp. */
 	GITHUB_REPO?: string;
+	/** Optional Judge0 API base URL. Defaults to the official Judge0 CE RapidAPI endpoint. */
+	JUDGE0_BASE_URL?: string;
+	/** Optional Judge0 API key. Required for the default RapidAPI endpoint; store only as a Worker secret. */
+	JUDGE0_API_KEY?: string;
+	/** Optional auth header override for self-hosted/custom Judge0 instances. */
+	JUDGE0_AUTH_HEADER?: string;
+	/** Optional RapidAPI host override. */
+	JUDGE0_API_HOST?: string;
 	/** Optional. Brave Search API key — enables the `brave` search provider. Set via `wrangler secret put BRAVE_SEARCH_API_KEY`. */
 	BRAVE_SEARCH_API_KEY?: string;
 	/** Optional. Tavily API key — enables the `tavily` search provider. Set via `wrangler secret put TAVILY_API_KEY`. */
@@ -254,12 +263,12 @@ function base64EncodeUtf8(text: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Sandbox code execution (Piston, emkc.org) — free, no API key required.
+// Bounded upstream fetches for sandbox/code-execution integrations.
 // ---------------------------------------------------------------------------
 
 /**
  * fetch() with a hard wall-clock timeout. Without this, a hung upstream
- * (Piston or GitHub) can hold a Worker request open indefinitely — Workers
+ * (Judge0 or GitHub) can hold a Worker request open indefinitely — Workers
  * bill/limit on wall time, so a stuck outbound call is a real availability
  * bug, not just a slow response. Throws a labeled error naming the call site
  * on timeout so it's distinguishable from a normal network/HTTP failure.
@@ -279,51 +288,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 	}
 }
 
-const PISTON_TIMEOUT_MS = 25_000;
 const GITHUB_TIMEOUT_MS = 20_000;
-
-/** Executes a snippet via the public Piston API. Ephemeral, stateless, no secrets involved. */
-async function pistonExecute(
-	language: string,
-	version: string,
-	code: string,
-	stdin: string,
-	args: string[],
-): Promise<any> {
-	const res = await fetchWithTimeout(
-		"https://emkc.org/api/v2/piston/execute",
-		{
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				language,
-				version: version || "*",
-				files: [{ content: code }],
-				stdin: stdin || "",
-				args: args || [],
-			}),
-		},
-		PISTON_TIMEOUT_MS,
-		"Piston execute",
-	);
-	const contentType = res.headers.get("content-type") ?? "";
-	const body = contentType.includes("application/json") ? await res.json() : await res.text();
-	if (!res.ok) {
-		throw new Error(`Piston API error (${res.status}): ${typeof body === "string" ? body : JSON.stringify(body)}`);
-	}
-	return body;
-}
-
-async function pistonRuntimes(): Promise<any> {
-	const res = await fetchWithTimeout(
-		"https://emkc.org/api/v2/piston/runtimes",
-		{},
-		PISTON_TIMEOUT_MS,
-		"Piston list runtimes",
-	);
-	if (!res.ok) throw new Error(`Piston API error (${res.status}) listing runtimes`);
-	return await res.json();
-}
 
 // ---------------------------------------------------------------------------
 // NOTE: Generic outbound internet access (web_fetch), keyless web search
@@ -1073,15 +1038,15 @@ export const tools: ToolDef[] = [
 	{
 		name: "run_code",
 		description:
-			"Execute a short code snippet for free in an ephemeral public sandbox (Piston, emkc.org) and return " +
-			"stdout, stderr, and exit code. Supports common languages (python, javascript/node, typescript, bash, " +
-			"go, rust, java, c, cpp, etc — call list_code_runtimes for the exact catalog). No account or credentials " +
-			"involved, no persistent state, and nothing here touches the Cloudflare/HF accounts. Not suitable for " +
-			"secrets or private data: the sandbox is a shared free third-party service.",
+			"Execute a short code snippet in an ephemeral Judge0 sandbox and return stdout, stderr, and exit code. " +
+			"Supports common languages (python, javascript/node, typescript, bash, go, rust, java, c, cpp, etc — " +
+			"call list_code_runtimes for the exact catalog). The default backend is Judge0 CE through RapidAPI and " +
+			"requires JUDGE0_API_KEY as a Worker secret. No persistent state is used; do not send secrets or private data " +
+			"to a third-party sandbox.",
 		inputSchema: {
 			type: "object",
 			properties: {
-				language: { type: "string", description: "Piston language id, e.g. 'python', 'javascript', 'bash', 'go'" },
+				language: { type: "string", description: "Judge0 language alias or numeric language id, e.g. 'python', 'javascript', 'bash', 'go'" },
 				version: { type: "string", description: "Language version, or '*' for latest. Default '*'." },
 				code: { type: "string", description: "Source code to run" },
 				stdin: { type: "string", description: "Optional stdin to feed the program" },
@@ -1090,7 +1055,7 @@ export const tools: ToolDef[] = [
 			required: ["language", "code"],
 		},
 		annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
-		handler: async (args) => {
+		handler: async (args, env) => {
 			const language = String(args.language ?? "").trim();
 			const code = String(args.code ?? "");
 			if (!language) throw new Error("language is required");
@@ -1099,21 +1064,21 @@ export const tools: ToolDef[] = [
 			const version = String(args.version ?? "*");
 			const stdin = String(args.stdin ?? "");
 			const cliArgs = Array.isArray(args.args) ? args.args.map((a) => String(a)).slice(0, 32) : [];
-			return await pistonExecute(language, version, code, stdin, cliArgs);
+			return await judge0Execute(env, language, version, code, stdin, cliArgs);
 		},
 	},
 	{
 		name: "list_code_runtimes",
-		description: "List the languages/versions currently available in the free Piston sandbox used by run_code.",
+		description: "List the languages/versions currently available from the configured Judge0 sandbox used by run_code.",
 		inputSchema: { type: "object", properties: {} },
 		annotations: { readOnlyHint: true, openWorldHint: true },
-		handler: async () => await pistonRuntimes(),
+		handler: async (_args, env) => await judge0Runtimes(env),
 	},
 	{
 		name: "gh_run_code",
 		description:
 			"Run code for real in an ephemeral, full Ubuntu VM with genuine internet access, via a GitHub Actions " +
-			"workflow (.github/workflows/mcp-exec.yml) dispatched on this repo. Unlike run_code (Piston), this can " +
+			"workflow (.github/workflows/mcp-exec.yml) dispatched on this repo. Unlike run_code (Judge0), this can " +
 			"install packages (apt/pip/npm/etc via 'setup'), make real outbound network calls, and run for up to " +
 			"10 minutes. It's asynchronous: this only starts the run and returns a run_key. Call gh_get_run_result " +
 			"with that run_key afterward (poll every few seconds) to get status and logs. Requires GITHUB_PAT to be " +
