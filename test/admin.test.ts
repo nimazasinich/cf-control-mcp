@@ -497,3 +497,11 @@ test("Overview: returns enriched counts including enabled/disabled models", asyn
   assert.equal(body.activeRoutingCount, 1);
   assert.equal(body.unavailableRoutingCount, 0);
 });
+
+test("Admin UI: trailing slash redirects to the canonical route", async () => {
+  const db = makeMockD1({});
+  const env = { MCP_AUTH_TOKEN: "tok", DM_DB: db } as unknown as AdminEnv;
+  const res = await handleAdmin(new Request("https://example.com/admin/"), env);
+  assert.equal(res.status, 308);
+  assert.equal(res.headers.get("location"), "/admin");
+});
