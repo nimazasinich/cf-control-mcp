@@ -148,6 +148,38 @@ jobs:
             printf '%s' "$EXA_KEY" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put EXA_API_KEY
           fi
 
+      - name: Verify /admin console acceptance (unauthenticated)
+        env:
+          BASE_URL: https://cf-control-mcp.amin-chinisaz-edu.workers.dev
+        run: |
+          set -euo pipefail
+          exec > >(tee -a deploy.log) 2>&1
+          echo "=== admin console acceptance (unauthenticated) ==="
+
+          # Gate 1: GET /admin must return HTTP 200 with an HTML content type
+          # (the owner login page is served even without a session).
+          admin_resp="$(curl --silent --show-error --output /dev/null --max-time 30 --write-out '%{http_code} %{content_type}' "${BASE_URL}/admin")"
+          admin_status="${admin_resp%% *}"
+          admin_ctype="$(printf '%s' "${admin_resp#* }" | tr '[:upper:]' '[:lower:]')"
+          if [ "$admin_status" = "200" ] && printf '%s' "$admin_ctype" | grep -q 'text/html'; then
+            echo "PASS | GATE | GET /admin | HTTP 200; Content-Type=${admin_ctype}"
+          else
+            echo "FAIL | GATE | GET /admin | expected HTTP 200 + text/html; got HTTP ${admin_status:-none}; Content-Type=${admin_ctype:-none}"
+            exit 1
+          fi
+
+          # Gate 2: GET /admin/api/overview without a session cookie must be
+          # rejected with HTTP 401 (owner-only auth gate).
+          overview_status="$(curl --silent --show-error --output /dev/null --max-time 30 --write-out '%{http_code}' "${BASE_URL}/admin/api/overview")"
+          if [ "$overview_status" = "401" ]; then
+            echo "PASS | GATE | GET /admin/api/overview (no auth) | HTTP 401 unauthorized"
+          else
+            echo "FAIL | GATE | GET /admin/api/overview (no auth) | expected HTTP 401; got HTTP ${overview_status:-none}"
+            exit 1
+          fi
+
+          echo "FINAL: PASS — admin console acceptance gates passed"
+
       - name: Verify live OAuth/MCP and full production acceptance
         env:
           MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
