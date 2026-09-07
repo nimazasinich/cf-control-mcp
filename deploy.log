@@ -10,17 +10,17 @@
   After installation, run Wrangler with `npx wrangler`.
 
 
-Total Upload: 1449.61 KiB / gzip: 608.37 KiB
-Worker Startup Time: 16 ms
+Total Upload: 1450.92 KiB / gzip: 608.82 KiB
+Worker Startup Time: 13 ms
 Your worker has access to the following bindings:
 - D1 Databases:
   - DM_DB: DM_DB (138a2aef-9f5a-4635-8346-dc474fdfff93)
 - Vars:
   - CF_AIG_GATEWAY_SLUG: "cf-control-mcp"
-Uploaded cf-control-mcp (2.51 sec)
-Deployed cf-control-mcp triggers (0.20 sec)
+Uploaded cf-control-mcp (2.25 sec)
+Deployed cf-control-mcp triggers (0.19 sec)
   https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-Current Version ID: a5dbc30e-dc99-445b-8c8e-5888d30f4305
+Current Version ID: 12ee9d2f-da1f-4a51-9de6-4da1d827f039
 
 Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
 === pushing required Worker secrets ===
