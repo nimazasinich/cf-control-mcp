@@ -79,8 +79,8 @@ var body=document.getElementById('models-body');if(body){body.addEventListener('
 var routing=document.getElementById('routing-body');if(routing)new MutationObserver(schedule).observe(routing,{childList:true,subtree:true,characterData:true});
 var providers=document.getElementById('providers-body');if(providers)new MutationObserver(schedule).observe(providers,{childList:true,subtree:true,characterData:true});
 ['md-total','md-enabled','md-callable','md-blocked'].forEach(function(id){var el=document.getElementById(id);if(el)new MutationObserver(schedule).observe(el,{childList:true,subtree:true,characterData:true});});
-document.getElementById('model-alias-stack').addEventListener('click',function(e){var b=e.target.closest('[data-alias-target]');if(!b)return;var target=b.dataset.aliasTarget;var search=document.getElementById('model-search');if(search){search.value=target;search.dispatchEvent(new Event('input',{bubbles:true}));setTimeout(function(){select(target);},0);}});
-document.getElementById('model-inspector-toggle').addEventListener('click',function(){var list=models();var m=list.find(function(x){return x.id===selectedId;});if(m&&m.toggle)m.toggle.click();});
+var stackEl=document.getElementById('model-alias-stack');if(stackEl)stackEl.addEventListener('click',function(e){var b=e.target.closest('[data-alias-target]');if(!b)return;var target=b.dataset.aliasTarget;var search=document.getElementById('model-search');if(search){search.value=target;search.dispatchEvent(new Event('input',{bubbles:true}));setTimeout(function(){select(target);},0);}});
+var toggleEl=document.getElementById('model-inspector-toggle');if(toggleEl)toggleEl.addEventListener('click',function(){var list=models();var m=list.find(function(x){return x.id===selectedId;});if(m&&m.toggle)m.toggle.click();});
 var filter=document.getElementById('model-filter');if(filter)filter.addEventListener('click',function(){setTimeout(schedule,0);});
 var search=document.getElementById('model-search');if(search)search.addEventListener('input',function(){setTimeout(schedule,0);});
 schedule();
