@@ -6,6 +6,7 @@
 import type { AdminEnv, ModelRow, ProviderRow, RoutingRuleRow } from "./types";
 import { createSessionCookie, clearSessionCookie, isAuthenticated, verifyOwnerToken } from "./auth";
 import { loginPageHtml, dashboardHtml } from "./ui";
+import { preLoginLoadingHtml } from "./ui/prelogin";
 import {
 	listProviders,
 	setProviderEnabled,
@@ -99,8 +100,13 @@ export async function handleAdmin(
 	const authed = await isAuthenticated(request, env);
 
 	if (path === "/admin" && request.method === "GET") {
-		if (!authed) return new Response(loginPageHtml(), { headers: { "Content-Type": "text/html" } });
+		if (!authed) return new Response(preLoginLoadingHtml(), { headers: { "Content-Type": "text/html", "Cache-Control": "private, no-store" } });
 		return new Response(dashboardHtml(), { headers: { "Content-Type": "text/html" } });
+	}
+
+	if (path === "/admin/login" && request.method === "GET") {
+		if (authed) return new Response(null, { status: 302, headers: { Location: "/admin" } });
+		return new Response(loginPageHtml(), { headers: { "Content-Type": "text/html", "Cache-Control": "private, no-store" } });
 	}
 
 	if (!authed) return json({ ok: false, error: "unauthorized" }, 401);
