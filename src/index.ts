@@ -549,7 +549,7 @@ export const tools: ToolDef[] = [
 				: [];
 			if (!/^[A-Za-z0-9_-]{1,64}$/.test(scriptName)) throw new Error("invalid script_name");
 			if (!/^[A-Za-z0-9._-]{1,128}$/.test(moduleName)) throw new Error("invalid module_name");
-			if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(compatibilityDate)) throw new Error("invalid compatibility_date");
+			if (!/^\d{4}-\d{2}-\d{2}$/.test(compatibilityDate)) throw new Error("invalid compatibility_date");
 			if (!source.trim()) throw new Error("source is empty");
 			if (source.length > 1_500_000) throw new Error("source exceeds 1.5 MB MCP safety limit");
 			const data = await cfUploadWorkerModule(env, scriptName, source, moduleName, compatibilityDate, compatibilityFlags);

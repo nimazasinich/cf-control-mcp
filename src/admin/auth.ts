@@ -40,6 +40,40 @@ async function sign(payload: string, secret: string): Promise<string> {
 	return base64UrlEncode(new Uint8Array(sig));
 }
 
+/**
+ * Constant-time string comparison: HMAC both inputs under a fixed key and XOR
+ * the fixed-length digests, so neither the compared length nor the first
+ * differing byte leaks through timing. This matches the anti-timing posture
+ * already used by the OAuth worker (secretMatches) and the provider gateway.
+ */
+async function timingSafeEqual(a: string, b: string): Promise<boolean> {
+	const key = await crypto.subtle.importKey(
+		"raw",
+		encoder.encode("admin-const-time-compare"),
+		{ name: "HMAC", hash: "SHA-256" },
+		false,
+		["sign"],
+	);
+	const [macA, macB] = await Promise.all([
+		crypto.subtle.sign("HMAC", key, encoder.encode(a)),
+		crypto.subtle.sign("HMAC", key, encoder.encode(b)),
+	]);
+	const va = new Uint8Array(macA);
+	const vb = new Uint8Array(macB);
+	let diff = 0;
+	for (let i = 0; i < va.length; i++) diff |= va[i] ^ vb[i];
+	return diff === 0;
+}
+
+/**
+ * Verify the owner login token against MCP_AUTH_TOKEN in constant time.
+ * Returns false when the secret is not configured or the token is empty.
+ */
+export async function verifyOwnerToken(token: string, env: AdminEnv): Promise<boolean> {
+	if (!env.MCP_AUTH_TOKEN || !token) return false;
+	return timingSafeEqual(token, env.MCP_AUTH_TOKEN);
+}
+
 export async function createSessionCookie(env: AdminEnv): Promise<string> {
 	const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
 	const payload = base64UrlEncode(encoder.encode(JSON.stringify({ exp })));
@@ -69,7 +103,7 @@ export async function isAuthenticated(request: Request, env: AdminEnv): Promise<
 	const [payload, sig] = cookie.split(".");
 	if (!payload || !sig) return false;
 	const expected = await sign(payload, env.MCP_AUTH_TOKEN);
-	if (expected !== sig) return false;
+	if (!(await timingSafeEqual(expected, sig))) return false;
 	try {
 		const decoded = JSON.parse(new TextDecoder().decode(base64UrlDecode(payload)));
 		return typeof decoded.exp === "number" && decoded.exp > Math.floor(Date.now() / 1000);

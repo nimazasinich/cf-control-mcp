@@ -4,7 +4,7 @@
  * protected only by GATEWAY_AUTH_TOKEN. Called for any /admin* path.
  */
 import type { AdminEnv, ModelRow, ProviderRow, RoutingRuleRow } from "./types";
-import { createSessionCookie, clearSessionCookie, isAuthenticated } from "./auth";
+import { createSessionCookie, clearSessionCookie, isAuthenticated, verifyOwnerToken } from "./auth";
 import { loginPageHtml, dashboardHtml } from "./ui";
 import {
 	listProviders,
@@ -80,7 +80,7 @@ export async function handleAdmin(
 	if (path === "/admin/login" && request.method === "POST") {
 		const form = await request.formData();
 		const token = form.get("token");
-		if (typeof token !== "string" || !env.MCP_AUTH_TOKEN || token !== env.MCP_AUTH_TOKEN) {
+		if (typeof token !== "string" || !(await verifyOwnerToken(token, env))) {
 			return new Response(loginPageHtml("Invalid token"), { status: 401, headers: { "Content-Type": "text/html" } });
 		}
 		const cookie = await createSessionCookie(env);
@@ -109,7 +109,7 @@ export async function handleAdmin(
 		]);
 		const providersById = new Map(providers.map((p) => [p.id, p]));
 		const modelsById = new Map(models.map((m) => [m.id, m]));
-		const activeRoutes = rules.filter((r) => routingState(r, modelsById, providersById)).filter((r) => routingState(r, modelsById, providersById) === "ACTIVE").length;
+		const activeRoutes = rules.filter((r) => routingState(r, modelsById, providersById) === "ACTIVE").length;
 		const availableModels = models.filter((m) => m.enabled === 1 && providersById.get(m.provider_id)?.enabled === 1).length;
 		return json({
 			providerCount: providers.length,
