@@ -11,16 +11,16 @@
 
 
 Total Upload: 478.28 KiB / gzip: 107.23 KiB
-Worker Startup Time: 17 ms
+Worker Startup Time: 14 ms
 Your worker has access to the following bindings:
 - D1 Databases:
   - DM_DB: DM_DB (138a2aef-9f5a-4635-8346-dc474fdfff93)
 - Vars:
   - CF_AIG_GATEWAY_SLUG: "cf-control-mcp"
-Uploaded cf-control-mcp (1.70 sec)
-Deployed cf-control-mcp triggers (0.15 sec)
+Uploaded cf-control-mcp (2.08 sec)
+Deployed cf-control-mcp triggers (0.22 sec)
   https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-Current Version ID: 328d8cca-6e3b-478b-8e30-e8b1e3bb7caa
+Current Version ID: ff0f4e9b-24e3-444a-87c1-c9150a8ba0ed
 
 Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
 === pushing required Worker secrets ===
@@ -117,6 +117,10 @@ Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more
 
 🌀 Creating the secret for the Worker "cf-control-mcp" 
 ✨ Success! Uploaded secret GITHUB_REPO
+=== admin console acceptance (unauthenticated) ===
+PASS | GATE | GET /admin | HTTP 200; Content-Type=text/html
+PASS | GATE | GET /admin/api/overview (no auth) | HTTP 401 unauthorized
+FINAL: PASS — admin console acceptance gates passed
 === live OAuth/MCP verification ===
 PASS: OAuth discovery, DCR, consent, PKCE, token exchange, MCP initialize, refresh, upgraded MCP tools, legacy path, and 401 challenge
 === full production acceptance ===
