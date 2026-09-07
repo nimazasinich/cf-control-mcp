@@ -1,4 +1,17 @@
 export { loginPageHtml } from "./ui/login";
+export {
+  loadingPageHtml,
+  overviewPageHtml,
+  providersPageHtml,
+  modelsPageHtml,
+  toolsPageHtml,
+  routingPageHtml,
+  healthPageHtml,
+  usagePageHtml,
+  auditPageHtml,
+  settingsPageHtml,
+} from "./ui/canonical-pages";
+
 import { dashboardHtml as baseDashboardHtml } from "./ui/dashboard";
 import { applyAuditFidelity } from "./ui/audit-fidelity";
 import { applyHealthFidelity } from "./ui/health-fidelity";

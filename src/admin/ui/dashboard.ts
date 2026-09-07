@@ -13,19 +13,19 @@ export function dashboardHtml(): string {
 <style>${ADMIN_CSS}</style>
 </head><body>
 ${ICONS}
-<div class="viewport"><div class="app" id="app">
+<div class="viewport"><div class="app ui-ready" id="app">
   <aside class="sidebar">
     <div class="brand"><div class="dw-mark"><svg viewBox="0 0 48 48" fill="none"><defs><linearGradient id="shell-logo" x1="4" y1="4" x2="44" y2="44"><stop stop-color="#2e91ff"/><stop offset=".55" stop-color="#20bce8"/><stop offset="1" stop-color="#29d5b4"/></linearGradient></defs><path d="M8 11.5 24 4l16 7.5v14.8c0 7.5-5.9 13.3-16 17.7C13.9 39.6 8 33.8 8 26.3Z" stroke="url(#shell-logo)" stroke-width="2.6"/><path d="M15 25.7 21.2 32 34 18.8" stroke="url(#shell-logo)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div><div class="brand-wordmark">DreamWorker</div><div class="brand-subtitle">MCP Control Plane</div></div></div>
     <nav class="nav" aria-label="Admin sections">
-      <a class="nav-item active" data-nav="overview"><span class="ni"><svg class="icon"><use href="#i-home"/></svg></span>Overview</a>
-      <a class="nav-item" data-nav="providers"><span class="ni"><svg class="icon"><use href="#i-db"/></svg></span>Providers</a>
-      <a class="nav-item" data-nav="models"><span class="ni"><svg class="icon"><use href="#i-cube"/></svg></span>Models</a>
-      <a class="nav-item" data-nav="mcp-tools"><span class="ni"><svg class="icon"><use href="#i-nodes"/></svg></span>MCP Tools</a>
-      <a class="nav-item" data-nav="routing"><span class="ni"><svg class="icon"><use href="#i-route"/></svg></span>Routing</a>
-      <a class="nav-item" data-nav="health"><span class="ni"><svg class="icon"><use href="#i-heart"/></svg></span>Health</a>
-      <a class="nav-item" data-nav="usage"><span class="ni"><svg class="icon"><use href="#i-bars"/></svg></span>Usage</a>
-      <a class="nav-item" data-nav="logs"><span class="ni"><svg class="icon"><use href="#i-doc"/></svg></span>Audit Log</a>
-      <a class="nav-item" data-nav="settings"><span class="ni"><svg class="icon"><use href="#i-gear"/></svg></span>Settings</a>
+      <a class="nav-item active" data-nav="overview" href="/admin/overview"><span class="ni"><svg class="icon"><use href="#i-home"/></svg></span>Overview</a>
+      <a class="nav-item" data-nav="providers" href="/admin/providers"><span class="ni"><svg class="icon"><use href="#i-db"/></svg></span>Providers</a>
+      <a class="nav-item" data-nav="models" href="/admin/models"><span class="ni"><svg class="icon"><use href="#i-cube"/></svg></span>Models</a>
+      <a class="nav-item" data-nav="mcp-tools" href="/admin/mcp-tools"><span class="ni"><svg class="icon"><use href="#i-nodes"/></svg></span>MCP Tools</a>
+      <a class="nav-item" data-nav="routing" href="/admin/routing"><span class="ni"><svg class="icon"><use href="#i-route"/></svg></span>Routing</a>
+      <a class="nav-item" data-nav="health" href="/admin/health"><span class="ni"><svg class="icon"><use href="#i-heart"/></svg></span>Health</a>
+      <a class="nav-item" data-nav="usage" href="/admin/usage"><span class="ni"><svg class="icon"><use href="#i-bars"/></svg></span>Usage</a>
+      <a class="nav-item" data-nav="logs" href="/admin/audit"><span class="ni"><svg class="icon"><use href="#i-doc"/></svg></span>Audit Log</a>
+      <a class="nav-item" data-nav="settings" href="/admin/settings"><span class="ni"><svg class="icon"><use href="#i-gear"/></svg></span>Settings</a>
     </nav>
     <div class="side-foot"><b>DreamWorker</b><span>The future is created today.</span><span id="side-version" class="version">version loading…</span></div>
   </aside>

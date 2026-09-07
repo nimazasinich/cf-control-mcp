@@ -5,8 +5,24 @@
  */
 import type { AdminEnv, ModelRow, ProviderRow, RoutingRuleRow } from "./types";
 import { createSessionCookie, clearSessionCookie, isAuthenticated, verifyOwnerToken } from "./auth";
-import { loginPageHtml, dashboardHtml } from "./ui";
+import {
+	loginPageHtml,
+	dashboardHtml,
+	loadingPageHtml,
+	overviewPageHtml,
+	providersPageHtml,
+	modelsPageHtml,
+	toolsPageHtml,
+	routingPageHtml,
+	healthPageHtml,
+	usagePageHtml,
+	auditPageHtml,
+	settingsPageHtml,
+} from "./ui";
 import { preLoginLoadingHtml } from "./ui/prelogin";
+import { getAdminUsageSummary } from "./usage-ext";
+import { getAdminSettingsSummary } from "./settings-ext";
+import { queryAuditEvents } from "./audit-ext";
 import {
 	listProviders,
 	setProviderEnabled,
@@ -94,22 +110,73 @@ export async function handleAdmin(
 	}
 
 	if (path === "/admin/logout" && request.method === "POST") {
-		return new Response(null, { status: 302, headers: { Location: "/admin", "Set-Cookie": clearSessionCookie() } });
+		return new Response(null, { status: 302, headers: { Location: "/admin/login", "Set-Cookie": clearSessionCookie() } });
 	}
 
 	const authed = await isAuthenticated(request, env);
-
-	if (path === "/admin" && request.method === "GET") {
-		if (!authed) return new Response(preLoginLoadingHtml(), { headers: { "Content-Type": "text/html", "Cache-Control": "private, no-store" } });
-		return new Response(dashboardHtml(), { headers: { "Content-Type": "text/html" } });
-	}
 
 	if (path === "/admin/login" && request.method === "GET") {
 		if (authed) return new Response(null, { status: 302, headers: { Location: "/admin" } });
 		return new Response(loginPageHtml(), { headers: { "Content-Type": "text/html", "Cache-Control": "private, no-store" } });
 	}
 
-	if (!authed) return json({ ok: false, error: "unauthorized" }, 401);
+	if (path === "/admin/loading" && request.method === "GET") {
+		return new Response(loadingPageHtml(), { headers: { "Content-Type": "text/html", "Cache-Control": "private, no-store" } });
+	}
+
+	if (path === "/admin" && request.method === "GET") {
+		if (!authed) return new Response(loadingPageHtml(), { headers: { "Content-Type": "text/html", "Cache-Control": "private, no-store" } });
+		return new Response(overviewPageHtml(), { headers: { "Content-Type": "text/html" } });
+	}
+
+	if (!authed) {
+		if (!path.startsWith("/admin/api")) {
+			return new Response(null, { status: 302, headers: { Location: "/admin/login" } });
+		}
+		return json({ ok: false, error: "unauthorized" }, 401);
+	}
+
+	// Canonical Authenticated UI Pages
+	if (path === "/admin/overview" && request.method === "GET") {
+		return new Response(overviewPageHtml(), { headers: { "Content-Type": "text/html" } });
+	}
+
+	if (path === "/admin/composite" && request.method === "GET") {
+		return new Response(dashboardHtml(), { headers: { "Content-Type": "text/html" } });
+	}
+
+	if (path === "/admin/providers" && request.method === "GET") {
+		return new Response(providersPageHtml(), { headers: { "Content-Type": "text/html" } });
+	}
+
+	if (path === "/admin/models" && request.method === "GET") {
+		return new Response(modelsPageHtml(), { headers: { "Content-Type": "text/html" } });
+	}
+
+	if ((path === "/admin/mcp-tools" || path === "/admin/tools") && request.method === "GET") {
+		return new Response(toolsPageHtml(), { headers: { "Content-Type": "text/html" } });
+	}
+
+	if (path === "/admin/routing" && request.method === "GET") {
+		return new Response(routingPageHtml(), { headers: { "Content-Type": "text/html" } });
+	}
+
+	if (path === "/admin/health" && request.method === "GET") {
+		return new Response(healthPageHtml(), { headers: { "Content-Type": "text/html" } });
+	}
+
+	if (path === "/admin/usage" && request.method === "GET") {
+		return new Response(usagePageHtml(), { headers: { "Content-Type": "text/html" } });
+	}
+
+	if ((path === "/admin/audit" || path === "/admin/logs") && request.method === "GET") {
+		return new Response(auditPageHtml(), { headers: { "Content-Type": "text/html" } });
+	}
+
+	if (path === "/admin/settings" && request.method === "GET") {
+		return new Response(settingsPageHtml(), { headers: { "Content-Type": "text/html" } });
+	}
+
 
 	if (path === "/admin/api/overview" && request.method === "GET") {
 		const [providers, models, rules] = await Promise.all([
@@ -205,11 +272,7 @@ export async function handleAdmin(
 	}
 
 	if (path === "/admin/api/usage" && request.method === "GET") {
-		const logs = await recentAudit(env, 100);
-		return json({
-			totalAuditEvents: logs.length,
-			recentActions: logs.slice(0, 10).map((l: any) => ({ action: l.action, at: l.at })),
-		});
+		return json(await getAdminUsageSummary(env, toolCatalog.length));
 	}
 
 	if (path === "/admin/api/tools" && request.method === "GET") {
@@ -234,15 +297,7 @@ export async function handleAdmin(
 	}
 
 	if (path === "/admin/api/settings" && request.method === "GET") {
-		return json({
-			gatewaySlug: env.CF_AIG_GATEWAY_SLUG || "cf-control-mcp",
-			accountIdMasked: env.CLOUDFLARE_ACCOUNT_ID ? `${env.CLOUDFLARE_ACCOUNT_ID.slice(0, 6)}...${env.CLOUDFLARE_ACCOUNT_ID.slice(-4)}` : "not configured",
-			d1Database: "DM_DB",
-			hasCfToken: Boolean(env.CLOUDFLARE_API_TOKEN),
-			hasGatewayAuth: Boolean(env.GATEWAY_AUTH_TOKEN),
-			hasMcpAuth: Boolean(env.MCP_AUTH_TOKEN),
-			version: "1.8.0",
-		});
+		return json(getAdminSettingsSummary(env));
 	}
 
 	const modelMatch = path.match(/^\/admin\/api\/models\/([^/]+)$/);
@@ -364,6 +419,17 @@ export async function handleAdmin(
 	}
 
 	if (path === "/admin/api/logs" && request.method === "GET") {
+		const q = url.searchParams;
+		if (q.has("search") || q.has("action") || q.has("actor") || q.has("target") || q.has("limit")) {
+			const limit = Math.min(200, Math.max(1, Number(q.get("limit")) || 50));
+			return json(await queryAuditEvents(env, {
+				search: q.get("search") || undefined,
+				actionPrefix: q.get("action") || undefined,
+				actor: q.get("actor") || undefined,
+				target: q.get("target") || undefined,
+				limit,
+			}));
+		}
 		return json({ events: await recentAudit(env) });
 	}
 
