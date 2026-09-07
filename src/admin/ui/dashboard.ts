@@ -9,6 +9,7 @@ export function dashboardHtml(): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>DreamWorker MCP Control Plane — Admin</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>${ADMIN_CSS}</style>
 </head><body>
 ${ICONS}
