@@ -7,19 +7,18 @@ test("Admin login preserves cf-control-mcp identity and token backend contract",
   assert.ok(html.includes("cf-control-mcp — Admin"));
   assert.ok(html.includes('method="POST" action="/admin/login"'));
   assert.ok(html.includes('name="token"'));
-  assert.ok(html.includes('data-default-auth="token"'));
-  assert.ok(html.includes('data-auth-mode="token" aria-controls="token-panel" aria-selected="true"'));
+  assert.ok(html.includes('autocomplete="current-password"'));
+  assert.ok(html.includes('id="auth-token" name="token"'));
   assert.ok(html.includes("Sign in"));
 });
 
-test("Admin login exposes username/password as preview-only, not a backend credential contract", () => {
+test("Admin login preserves canonical email/token visuals without fake alternate auth", () => {
   const html = loginPageHtml();
-  assert.ok(html.includes("Username &amp; Password"));
-  assert.ok(html.includes('data-auth-mode="password"'));
-  assert.ok(html.includes('data-preview-field="username"'));
-  assert.ok(html.includes('data-preview-field="password"'));
-  assert.ok(html.includes("No backend contract yet"));
-  assert.ok(!html.includes('name="username"'));
+  assert.ok(html.includes('id="auth-email"'));
+  assert.ok(html.includes('readonly aria-readonly="true"'));
+  assert.ok(html.includes("or continue with"));
+  assert.ok(html.includes("OAuth sign-in is not enabled"));
+  assert.ok(!html.includes('name="email"'));
   assert.ok(!html.includes('name="password"'));
 });
 
