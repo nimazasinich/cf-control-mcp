@@ -598,6 +598,10 @@ async function proxyMcp(request: Request, env: Env, origin: string): Promise<Res
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname === "/favicon.svg" && request.method === "GET") {
+      return new Response('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="8" y1="8" x2="56" y2="56"><stop stop-color="#2b79ef"/><stop offset=".55" stop-color="#25bfe7"/><stop offset="1" stop-color="#3bd1b8"/></linearGradient></defs><rect width="64" height="64" rx="14" fill="#f7fbff"/><path d="M12 16 32 7l20 9v18c0 10-7 17-20 23C19 51 12 44 12 34Z" fill="none" stroke="url(#g)" stroke-width="4"/><path d="m21 33 8 8 15-18" fill="none" stroke="url(#g)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>', { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400" } });
+    }
     const origin = url.origin;
 
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders() });

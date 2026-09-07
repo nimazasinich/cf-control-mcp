@@ -6,9 +6,10 @@ function escapeHtmlServer(value: string): string {
 
 /** Canonical 1368x753 login visual adapted to the real owner-token backend. */
 export function loginPageHtml(error?: string): string {
-  if (!error) return REFERENCE_HTML;
+  const html = REFERENCE_HTML.replace("</title>", "</title><link rel=\"icon\" href=\"/favicon.svg\" type=\"image/svg+xml\">");
+  if (!error) return html;
   const safe = escapeHtmlServer(error);
-  return REFERENCE_HTML.replace(
+  return html.replace(
     '<div id="form-feedback" class="form-feedback" role="status" aria-live="polite"><span class="feedback-dot"></span><span id="form-feedback-text"></span></div>',
     '<div id="form-feedback" class="form-feedback show error" role="status" aria-live="polite"><span class="feedback-dot"></span><span id="form-feedback-text">' + safe + '</span></div>',
   );

@@ -71,8 +71,14 @@ test("Admin API: unauthenticated request returns 401 with ok:false", async () =>
   const uiRes = await handleAdmin(uiReq, env);
   assert.equal(uiRes.status, 200);
   const html = await uiRes.text();
-  assert.ok(html.includes("cf-control-mcp — Admin"));
-  assert.ok(html.includes("Sign in"));
+  assert.ok(html.includes("DreamWorker — Loading"));
+  assert.ok(html.includes("location.replace('/admin/login')"));
+
+  const loginRes = await handleAdmin(new Request("https://example.com/admin/login"), env);
+  assert.equal(loginRes.status, 200);
+  const loginHtml = await loginRes.text();
+  assert.ok(loginHtml.includes("cf-control-mcp — Admin"));
+  assert.ok(loginHtml.includes("Sign in"));
 });
 
 // ---------------------------------------------------------------------------
