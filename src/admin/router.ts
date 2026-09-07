@@ -77,6 +77,10 @@ export async function handleAdmin(
 	const url = new URL(request.url);
 	const path = url.pathname;
 
+	if ((path === "/admin/" || path === "/admin/index.html") && request.method === "GET") {
+		return new Response(null, { status: 308, headers: { Location: "/admin", "Cache-Control": "private, no-store" } });
+	}
+
 	if (path === "/admin/login" && request.method === "POST") {
 		const form = await request.formData();
 		const token = form.get("token");
