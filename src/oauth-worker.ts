@@ -1,6 +1,7 @@
 import legacyWorker, { tools, type Env } from "./index";
 import { handleProviderGateway } from "./provider-gateway/router";
 import { handleAdmin } from "./admin/router";
+import { preLoginLoadingHtml } from "./admin/ui/prelogin";
 
 /**
  * OAuth 2.1 / MCP authorization wrapper around the existing stateless MCP server.
@@ -630,25 +631,10 @@ export default {
     if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) return handleAdmin(request, env, tools);
 
     if (url.pathname === "/" && request.method === "GET") {
-      return json({
-        name: "cf-control-mcp",
-        version: "1.8.0",
-        description: "OAuth-enabled remote MCP server for Cloudflare account control, plus OpenAI-compatible provider gateway for Google Gemini.",
-        mcp_endpoint: `${origin}/mcp`,
-        provider_gateway: {
-          models_endpoint: `${origin}/v1/models`,
-          chat_completions_endpoint: `${origin}/v1/chat/completions`,
-          auth: "Bearer GATEWAY_AUTH_TOKEN (separate from MCP auth)",
-          providers: ["google-gemini"],
-        },
-        oauth: {
-          protected_resource_metadata: `${origin}/.well-known/oauth-protected-resource`,
-          authorization_server_metadata: `${origin}/.well-known/oauth-authorization-server`,
-          authorization_endpoint: `${origin}/authorize`,
-          token_endpoint: `${origin}/token`,
-          registration_endpoint: `${origin}/register`,
-          scopes_supported: [...OAUTH_SCOPES],
-          pkce: "S256",
+      return new Response(preLoginLoadingHtml(), {
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "private, no-store",
         },
       });
     }
