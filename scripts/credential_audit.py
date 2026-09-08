@@ -34,7 +34,7 @@ def record(name: str, present: bool, status: str, evidence: str) -> None:
     print(f"AUDIT {status:7} {name}: {row['evidence']}")
 
 def req(url: str, *, method: str = "GET", headers: dict[str, str] | None = None, body: Any = None, timeout: int = 25) -> tuple[int, dict[str, Any], str]:
-    h = {"User-Agent": "cf-control-credential-audit/1.0", **(headers or {})}
+    h = {"User-Agent": "cf-control-credential-audit/1.1", **(headers or {})}
     data = None
     if body is not None:
         data = json.dumps(body).encode()
@@ -47,23 +47,31 @@ def req(url: str, *, method: str = "GET", headers: dict[str, str] | None = None,
                 parsed = json.loads(raw) if raw else {}
             except Exception:
                 parsed = {}
-            return response.status, parsed, raw
+            return response.status, parsed if isinstance(parsed, dict) else {}, raw
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")
         try:
             parsed = json.loads(raw) if raw else {}
         except Exception:
             parsed = {}
-        return exc.code, parsed, raw
+        return exc.code, parsed if isinstance(parsed, dict) else {}, raw
     except Exception as exc:
         return 0, {}, type(exc).__name__
+
+def object_field(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    value = payload.get(key)
+    return value if isinstance(value, dict) else {}
+
+def list_field(payload: dict[str, Any], key: str) -> list[Any]:
+    value = payload.get(key)
+    return value if isinstance(value, list) else []
 
 def cf_verify(name: str, token: str, account_id: str = "") -> None:
     if not token:
         record(name, False, "MISSING", "secret not configured")
         return
     code, payload, _ = req(f"{CF_API}/user/tokens/verify", headers={"Authorization": f"Bearer {token}"})
-    state = payload.get("result", {}).get("status", "unknown")
+    state = object_field(payload, "result").get("status", "unknown")
     if code != 200 or state != "active":
         record(name, True, "FAIL", f"token verify HTTP={code} status={state}")
         return
@@ -111,7 +119,7 @@ def main() -> int:
             body={"model": "google-ai-studio/gemini-3.6-flash", "messages": [{"role": "user", "content": "Reply AIG_OK"}], "max_tokens": 8},
             timeout=40,
         )
-        choices = payload.get("choices", []) if isinstance(payload, dict) else []
+        choices = list_field(payload, "choices")
         record(name, True, "PASS" if code == 200 and choices else "FAIL", f"real BYOK inference HTTP={code}; choices={len(choices)}")
 
     # APEX and probe candidates.
@@ -129,7 +137,7 @@ def main() -> int:
             record(name, False, "MISSING", "secret not configured")
             continue
         code, payload, _ = req(f"{BASE}/v1/models", headers={"Authorization": f"Bearer {token}"})
-        count = len(payload.get("data", [])) if isinstance(payload, dict) else 0
+        count = len(list_field(payload, "data"))
         record(name, True, "PASS" if code == 200 and count else "FAIL", f"/v1/models HTTP={code}; models={count}")
 
     # MCP owner/legacy auth.
@@ -138,8 +146,8 @@ def main() -> int:
         headers = {"Authorization": f"Bearer {mcp}"}
         icode, ip, _ = req(f"{BASE}/mcp", method="POST", headers=headers, body={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "credential-audit", "version": "1"}}})
         tcode, tp, _ = req(f"{BASE}/mcp", method="POST", headers=headers, body={"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-        protocol = ip.get("result", {}).get("protocolVersion", "") if isinstance(ip, dict) else ""
-        tools = len(tp.get("result", {}).get("tools", [])) if isinstance(tp, dict) else 0
+        protocol = object_field(ip, "result").get("protocolVersion", "")
+        tools = len(list_field(object_field(tp, "result"), "tools"))
         record("MCP_AUTH_TOKEN", True, "PASS" if icode == 200 and tcode == 200 and tools else "FAIL", f"initialize HTTP={icode} protocol={protocol}; tools/list HTTP={tcode} count={tools}")
     else:
         record("MCP_AUTH_TOKEN", False, "MISSING", "secret not configured")
