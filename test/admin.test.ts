@@ -40,7 +40,7 @@ test("Admin Health: google-ai-studio not configured", async () => {
 
 test("Admin Health: google-ai-studio healthy", async () => {
   const env = { CLOUDFLARE_ACCOUNT_ID: "acc", CF_AIG_GATEWAY_SLUG: "gw", CF_AIG_TOKEN: "mock" } as AdminEnv;
-  (globalThis as any).fetch = async () => new Response(JSON.stringify({}), { status: 200 });
+  (globalThis as any).fetch = async () => new Response(JSON.stringify({}), { status: 200, headers: { "cf-aig-log-id": "log-test" } });
   const res = await testGoogleAiStudio(env);
   assert.equal(res.state, "HEALTHY");
   assert.ok(res.latencyMs !== null);
@@ -181,9 +181,13 @@ function makeMockD1(initial: {
 async function authedReq(url: string, env: AdminEnv, opts: RequestInit = {}): Promise<Request> {
   const cookie = await createSessionCookie(env);
   const cookieValue = cookie.split(";")[0];
+  const headers: Record<string, string> = { ...((opts.headers as Record<string, string>) ?? {}), Cookie: cookieValue };
+  if (opts.method && ["POST", "PATCH", "PUT", "DELETE"].includes(opts.method.toUpperCase()) && !headers.Origin) {
+    headers.Origin = new URL(url).origin;
+  }
   return new Request(url, {
     ...opts,
-    headers: { ...((opts.headers as Record<string, string>) ?? {}), Cookie: cookieValue },
+    headers,
   });
 }
 

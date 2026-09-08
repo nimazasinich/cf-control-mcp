@@ -181,6 +181,10 @@ export async function deleteProviderCredential(
 		providerConfigDeleted = true;
 	}
 
+	if (!providerConfigDeleted) {
+		return { ok: false, providerConfigDeleted: false, credentialRevoked: false, error: "Provider Config cleanup failed" };
+	}
+
 	let credentialRevoked = false;
 
 	// Step 2: Delete from Secrets Store

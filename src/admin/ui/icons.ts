@@ -11,6 +11,7 @@ export const ICONS = `
   <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.1"/><path d="M19 13.5v-3l-2.1-.7a7.8 7.8 0 0 0-.7-1.6l1-2-2.1-2.1-2 1A7.8 7.8 0 0 0 10.5 4L9.8 2H6.9l-.7 2.1a7.8 7.8 0 0 0-1.6.7l-2-1L.5 5.9l1 2A7.8 7.8 0 0 0 .8 9.5L-1.3 10.2v3l2.1.7a7.8 7.8 0 0 0 .7 1.6l-1 2 2.1 2.1 2-1a7.8 7.8 0 0 0 1.6.7l.7 2.1h2.9l.7-2.1a7.8 7.8 0 0 0 1.6-.7l2 1 2.1-2.1-1-2a7.8 7.8 0 0 0 .7-1.6z" transform="translate(3 0) scale(.75 1)"/></symbol>
   <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.7" cy="10.7" r="6.3"/><path d="m15.4 15.4 4.4 4.4"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5"/><path d="M18.1 9.1A7.5 7.5 0 1 0 19 16"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.4 4.3 4.3L19 7"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
   <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2.8 20h18.4z"/><path d="M12 9v5M12 17.3v.1"/></symbol>

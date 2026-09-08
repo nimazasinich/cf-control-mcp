@@ -14,21 +14,24 @@ import { applyToolsFidelity } from "./ui/tools-fidelity";
 import { applyUsageFidelity } from "./ui/usage-fidelity";
 import { applyVisualAcceptanceFixes } from "./ui/visual-acceptance-fixes";
 import { applyCorePagesCanonical } from "./ui/core-pages-canonical";
+import { applyReadabilityControls } from "./ui/readability-controls";
 
 export function dashboardHtml(): string {
-  return applyVisualAcceptanceFixes(
-    applyCorePagesCanonical(
-      applyFidelityIntegrity(
-        applyOverviewFidelity(
-          applyToolsFidelity(
-            applyRoutingFidelity(
-              applyUsageFidelity(
-                applySettingsFidelity(
-                  applyAuditFidelity(
-                    applyHealthFidelity(
-                      applyLoadingFidelity(
-                        applyProvidersFidelity(
-                          applyModelsFidelity(baseDashboardHtml()),
+  return applyReadabilityControls(
+    applyVisualAcceptanceFixes(
+      applyProvidersFidelity(
+        applyCorePagesCanonical(
+          applyFidelityIntegrity(
+            applyOverviewFidelity(
+              applyToolsFidelity(
+                applyRoutingFidelity(
+                  applyUsageFidelity(
+                    applySettingsFidelity(
+                      applyAuditFidelity(
+                        applyHealthFidelity(
+                          applyLoadingFidelity(
+                            applyModelsFidelity(baseDashboardHtml()),
+                          ),
                         ),
                       ),
                     ),

@@ -13,10 +13,13 @@ test("Providers keeps a provider-specific operational posture and diagnostic ins
   assert.ok(html.includes('id="providers-body"'));
 });
 
-test("Providers preserves real actions while keeping unsupported creation disabled", () => {
+test("Providers preserves real actions and exposes the supported create-provider workflow", () => {
   const html = dashboardHtml();
+  assert.ok(html.includes('data-action="add-provider"'));
+  assert.ok(html.includes("Create provider"));
+  assert.ok(html.includes("Credential material is submitted once and never returned."));
   assert.ok(html.includes('data-action="refresh-providers"'));
-  assert.ok(html.includes('No create-provider backend contract exists'));
+  assert.ok(!html.includes('No create-provider backend contract exists'));
   assert.ok(html.includes('data-provider-toggle'));
   assert.ok(html.includes('data-provider-test'));
   assert.ok(html.includes('data-provider-credential'));

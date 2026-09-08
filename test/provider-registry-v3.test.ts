@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { KNOWN_PROVIDER_TEMPLATES, knownProviderTemplate } from "../src/admin/provider-catalog";
 import { validateCustomProviderBaseUrl, createCloudflareCustomProvider } from "../src/admin/custom-providers";
-import { createModel } from "../src/admin/db";
+import { createModel, createProvider } from "../src/admin/db";
 import { classifyProviderHealth, requestProviderChat } from "../src/provider-gateway/provider-runtime";
 import { handleChatCompletions } from "../src/provider-gateway/cloudflare-ai-gateway";
 import { listAvailableModels, resolveModelCandidates } from "../src/provider-gateway/models";
@@ -326,6 +326,7 @@ test("Provider catalog ids remain unique after adding the New API gateways", () 
 function makeProviderRegistryDb() {
   const providers = new Map<string, any>();
   const models = new Map<string, any>();
+  const audits: any[] = [];
   const db = {
     prepare(sql: string) {
       const st: any = {
@@ -334,11 +335,14 @@ function makeProviderRegistryDb() {
         async first() {
           if (sql.includes("FROM providers WHERE id")) return providers.get(this.args[0]) ?? null;
           if (sql.includes("FROM models WHERE id")) return models.get(this.args[0]) ?? null;
+          if (sql.includes("FROM models WHERE public_alias")) return Array.from(models.values()).find((m) => m.public_alias === this.args[0]) ?? null;
+          if (sql.includes("FROM routing_rules WHERE public_alias")) return null;
           return null;
         },
         async all() {
           if (sql.includes("FROM providers")) return { results: Array.from(providers.values()) };
           if (sql.includes("FROM models")) return { results: Array.from(models.values()) };
+          if (sql.includes("FROM audit_events")) return { results: audits };
           return { results: [] };
         },
         async run() {
@@ -357,16 +361,26 @@ function makeProviderRegistryDb() {
             const row = providers.get(id);
             if (row) row.byok_alias = alias;
           } else if (sql.includes("INSERT INTO models")) {
-            const [id, provider_id, public_alias, enabled, free_tier] = this.args;
-            models.set(id, { id, provider_id, public_alias, enabled, free_tier, created_at: "2026-09-08T00:00:00Z" });
+            const [id, provider_id, public_alias, enabled, free_tier, display_name, description] = this.args;
+            models.set(id, { id, provider_id, public_alias, enabled, free_tier, display_name, description, created_at: "2026-09-08T00:00:00Z" });
+          } else if (sql.includes("DELETE FROM models WHERE provider_id")) {
+            for (const [id, model] of models) if (model.provider_id === this.args[0]) models.delete(id);
+          } else if (sql.includes("DELETE FROM providers WHERE id")) {
+            providers.delete(this.args[0]);
+          } else if (sql.includes("INSERT INTO audit_events")) {
+            audits.push({ action: this.args[0], target: this.args[1], detail: this.args[2], at: "2026-09-08T00:00:00Z" });
           }
           return { success: true, meta: { changes: 1 } };
         },
       };
       return st;
     },
+    async batch(statements: any[]) {
+      for (const statement of statements) await statement.run();
+      return statements.map(() => ({ success: true }));
+    },
   };
-  return { db, providers, models };
+  return { db, providers, models, audits };
 }
 
 test("Adding a TaBiToken provider without a body baseUrl/testModel falls back to the preset defaults", async () => {
@@ -471,6 +485,184 @@ test("Adding a self-hosted New API provider requires an operator-supplied base U
   const body = await res.json() as any;
   assert.equal(res.status, 400);
   assert.equal(body.ok, false);
+});
+
+test("Provider creation requires an authenticated Admin owner session", async () => {
+  const { db } = makeProviderRegistryDb();
+  const env = { MCP_AUTH_TOKEN: "tok", DM_DB: db as any } as unknown as AdminEnv;
+  const res = await handleAdmin(new Request("https://example.com/admin/api/providers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: "https://example.com" },
+    body: JSON.stringify({ id: "regional", displayName: "Regional", providerSlug: "regional", baseUrl: "https://api.example.com" }),
+  }), env);
+  assert.equal(res.status, 401);
+});
+
+test("Provider creation rejects invalid JSON", async () => {
+  const { db } = makeProviderRegistryDb();
+  const env = { MCP_AUTH_TOKEN: "tok", DM_DB: db as any } as unknown as AdminEnv;
+  const cookie = (await createSessionCookie(env)).split(";")[0];
+  const res = await handleAdmin(new Request("https://example.com/admin/api/providers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: cookie, Origin: "https://example.com" },
+    body: "{not json",
+  }), env);
+  const body = await res.json() as any;
+  assert.equal(res.status, 400);
+  assert.equal(body.error, "invalid_json");
+});
+
+test("Provider creation rejects duplicate provider IDs before provisioning", async () => {
+  const { db } = makeProviderRegistryDb();
+  const env = { MCP_AUTH_TOKEN: "tok", DM_DB: db as any } as unknown as AdminEnv;
+  await createProvider(env, {
+    id: "regional", displayName: "Regional", kind: "custom", providerSlug: "custom-regional",
+    transport: "gateway-custom", authType: "byok", baseUrl: "https://api.example.com",
+    apiPath: "v1/chat/completions", credentialRequired: true,
+  });
+  let fetchCalled = false;
+  globalThis.fetch = (async () => { fetchCalled = true; return new Response("{}"); }) as any;
+  const cookie = (await createSessionCookie(env)).split(";")[0];
+  const res = await handleAdmin(new Request("https://example.com/admin/api/providers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: cookie, Origin: "https://example.com" },
+    body: JSON.stringify({ id: "regional", displayName: "Regional 2", providerSlug: "regional-2", baseUrl: "https://api2.example.com" }),
+  }), env);
+  const body = await res.json() as any;
+  assert.equal(res.status, 409);
+  assert.equal(body.error, "provider_already_exists");
+  assert.equal(fetchCalled, false);
+});
+
+test("Provider creation rejects invalid custom slugs and unsafe custom URLs", async () => {
+  const cases = [
+    { body: { id: "badslug", displayName: "Bad", providerSlug: "Bad Slug!", baseUrl: "https://api.example.com" }, error: "invalid_custom_provider_slug" },
+    { body: { id: "http-url", displayName: "Bad", providerSlug: "safe-slug", baseUrl: "http://api.example.com" }, error: "custom_provider_requires_https" },
+    { body: { id: "creds-url", displayName: "Bad", providerSlug: "safe-slug-2", baseUrl: "https://user:secret@api.example.com" }, error: "custom_provider_base_url_must_not_contain_credentials_or_query" },
+  ];
+  for (const item of cases) {
+    const { db } = makeProviderRegistryDb();
+    const env = { MCP_AUTH_TOKEN: "tok", DM_DB: db as any, CLOUDFLARE_ACCOUNT_ID: "acct", CLOUDFLARE_API_TOKEN: "cf" } as unknown as AdminEnv;
+    const cookie = (await createSessionCookie(env)).split(";")[0];
+    const res = await handleAdmin(new Request("https://example.com/admin/api/providers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie, Origin: "https://example.com" },
+      body: JSON.stringify(item.body),
+    }), env);
+    const body = await res.json() as any;
+    assert.equal(res.status, 400);
+    assert.equal(body.error, item.error);
+  }
+});
+
+test("Provider creation rejects unsupported transport/auth combinations", async () => {
+  const { db } = makeProviderRegistryDb();
+  const env = { MCP_AUTH_TOKEN: "tok", DM_DB: db as any } as unknown as AdminEnv;
+  const cookie = (await createSessionCookie(env)).split(";")[0];
+  const res = await handleAdmin(new Request("https://example.com/admin/api/providers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: cookie, Origin: "https://example.com" },
+    body: JSON.stringify({ id: "badcombo", displayName: "Bad", providerSlug: "badcombo", baseUrl: "https://api.example.com", transport: "gateway-custom", authType: "cloudflare-binding" }),
+  }), env);
+  const body = await res.json() as any;
+  assert.equal(res.status, 400);
+  assert.equal(body.error, "unsupported_transport_auth_combination");
+});
+
+test("Provider creation with a credential never returns or audits the raw credential and creates the model", async () => {
+  const { db, providers, models, audits } = makeProviderRegistryDb();
+  const env = {
+    MCP_AUTH_TOKEN: "tok",
+    DM_DB: db as any,
+    CLOUDFLARE_ACCOUNT_ID: "acct",
+    CLOUDFLARE_API_TOKEN: "cf-admin-token",
+    CF_AIG_GATEWAY_SLUG: "gw",
+  } as unknown as AdminEnv;
+
+  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    const href = String(url);
+    if (href.includes("/ai-gateway/custom-providers")) {
+      const body = JSON.parse(String(init?.body || "{}"));
+      return new Response(JSON.stringify({ success: true, result: { id: "cp-regional", slug: body.slug, base_url: body.base_url } }), { status: 200 });
+    }
+    if (href.endsWith("/secrets_store/stores")) {
+      return new Response(JSON.stringify({ success: true, result: [{ id: "store-1", name: "default_secrets_store" }] }), { status: 200 });
+    }
+    if (href.endsWith("/secrets_store/stores/store-1/secrets") && !init?.method) {
+      return new Response(JSON.stringify({ success: true, result: [] }), { status: 200 });
+    }
+    if (href.endsWith("/secrets_store/stores/store-1/secrets") && init?.method === "POST") {
+      return new Response(JSON.stringify({ success: true, result: [{ id: "secret-1" }] }), { status: 200 });
+    }
+    if (href.includes("/secrets_store/stores/store-1/secrets/secret-1")) {
+      return new Response(JSON.stringify({ success: true, result: { status: "active" } }), { status: 200 });
+    }
+    if (href.endsWith("/provider_configs") && !init?.method) {
+      return new Response(JSON.stringify({ success: true, result: [] }), { status: 200 });
+    }
+    if (href.endsWith("/provider_configs") && init?.method === "POST") {
+      return new Response(JSON.stringify({ success: true }), { status: 200 });
+    }
+    throw new Error(`unexpected fetch ${href}`);
+  }) as any;
+
+  const cookie = (await createSessionCookie(env)).split(";")[0];
+  const secret = "sk-live-raw-secret";
+  const res = await handleAdmin(new Request("https://example.com/admin/api/providers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: cookie, Origin: "https://example.com" },
+    body: JSON.stringify({
+      id: "regional-llm",
+      displayName: "Regional LLM",
+      providerSlug: "regional-llm",
+      baseUrl: "https://api.example.com",
+      credentialValue: secret,
+      models: [{ id: "regional-chat", displayName: "Regional Chat", enabled: true }],
+    }),
+  }), env);
+  const body = await res.json() as any;
+  assert.equal(res.status, 201, JSON.stringify(body));
+  assert.equal(JSON.stringify(body).includes(secret), false);
+  assert.equal(audits.some((a) => JSON.stringify(a).includes(secret)), false);
+  assert.equal(providers.get("regional-llm").provider_slug, "custom-regional-llm");
+  assert.equal(providers.get("regional-llm").byok_alias, "default");
+  assert.equal(models.get("regional-chat").provider_id, "regional-llm");
+});
+
+test("Provider creation compensates and does not report success when credential storage fails", async () => {
+  const { db, providers } = makeProviderRegistryDb();
+  const env = {
+    MCP_AUTH_TOKEN: "tok",
+    DM_DB: db as any,
+    CLOUDFLARE_ACCOUNT_ID: "acct",
+    CLOUDFLARE_API_TOKEN: "cf-admin-token",
+    CF_AIG_GATEWAY_SLUG: "gw",
+  } as unknown as AdminEnv;
+
+  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    const href = String(url);
+    if (href.includes("/ai-gateway/custom-providers") && init?.method === "POST") {
+      return new Response(JSON.stringify({ success: true, result: { id: "cp-fail", slug: "will-fail", base_url: "https://api.example.com" } }), { status: 200 });
+    }
+    if (href.includes("/ai-gateway/custom-providers/cp-fail") && init?.method === "DELETE") {
+      return new Response(JSON.stringify({ success: true }), { status: 200 });
+    }
+    if (href.endsWith("/secrets_store/stores")) {
+      return new Response(JSON.stringify({ success: false, result: [] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ success: false }), { status: 404 });
+  }) as any;
+
+  const cookie = (await createSessionCookie(env)).split(";")[0];
+  const res = await handleAdmin(new Request("https://example.com/admin/api/providers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: cookie, Origin: "https://example.com" },
+    body: JSON.stringify({ id: "will-fail", displayName: "Will Fail", providerSlug: "will-fail", baseUrl: "https://api.example.com", credentialValue: "secret" }),
+  }), env);
+  const body = await res.json() as any;
+  assert.equal(res.status, 502);
+  assert.equal(body.ok, false);
+  assert.equal(providers.has("will-fail"), false);
 });
 
 test("gateway-custom transport for a New API gateway routes through the Cloudflare AI Gateway custom-provider path", async () => {
