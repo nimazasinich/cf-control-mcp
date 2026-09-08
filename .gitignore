@@ -8,3 +8,10 @@ build-test/
 state/*.local.txt
 scripts/_gw_secret_setup.py
 admin-visual-artifacts/
+
+# Adaptive CI Governor runtime artifacts
+.ai-governor/
+.governor-artifact/
+.governor-in/
+.gemini/
+gha-creds-*.json
