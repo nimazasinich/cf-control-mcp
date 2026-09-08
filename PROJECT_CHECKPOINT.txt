@@ -1,0 +1,27 @@
+Repository: nimazasinich/cf-control-mcp
+Artifact checkpoint: Provider Registry V3 local implementation
+Historical production baseline: see repository history / prior production checkpoint
+Current artifact deployment status: NOT DEPLOYED
+
+Provider Registry V3 additions:
+- extensible provider catalog + Cloudflare Custom Provider flow
+- BYOK / Unified Billing / Workers AI binding / no-auth metadata modes
+- in-row Test, Network evidence, Priority up/down, Key, Enable/Disable
+- smart priority-based `auto` routing with retryable failover
+- fail-closed 2xx handling when Cloudflare Gateway evidence is absent
+- strict explicit-model behavior (no silent model substitution)
+- Workers AI provider-token-free model pool and `free` route
+- migration 0003_provider_registry_v3.sql
+- Google Antigravity kept as disabled custom-endpoint profile until a real endpoint/model is supplied
+
+Verification at packaging time:
+- runtime tests: 208 total / 200 pass / 8 skip / 0 fail
+- focused changed-source TypeScript verification: PASS / 0 diagnostics
+- D1 migration simulation: PASS
+- 1368x753 Providers + Add/Custom/Antigravity modal visual acceptance: PASS
+
+Important:
+- no live Cloudflare production deployment is claimed
+- no live provider round-trip with the user's production credentials is claimed
+- incomplete node_modules from the working snapshot is not shipped
+- .env/.git/build-test/verification shims are not shipped
