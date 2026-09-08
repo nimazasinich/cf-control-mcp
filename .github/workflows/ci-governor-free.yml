@@ -1,0 +1,151 @@
+name: CI Governor (Free Tier, Shadow Mode)
+
+# Phase 1: read-only failure classifier.
+# - Never writes code, never pushes, never touches other workflows.
+# - Only output: one PR comment with a structured verdict.
+# - Runs on GitHub-hosted Actions (free for this public repo) and calls the
+#   Gemini Developer API free tier directly (no paid subscription, no CLI
+#   login — that path was discontinued for individual accounts on 2026-06-18).
+# - On quota exhaustion (HTTP 429) it reports QUOTA_BLOCKED and stops. It
+#   never silently falls back to a paid provider.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write   # needed only to post the one advisory comment
+
+concurrency:
+  group: ci-governor-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}
+  cancel-in-progress: true
+
+jobs:
+  govern:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Resolve PR number
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NUMBER=$(echo '${{ toJson(github.event.workflow_run.pull_requests) }}' | jq -r '.[0].number // empty')
+          if [ -z "$NUMBER" ]; then
+            echo "No associated PR found; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Collect failed job logs and PR diff
+        if: steps.pr.outputs.skip == 'false'
+        id: evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+
+          gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" > jobs.json
+
+          : > failed_logs.txt
+          FAILED_JOB_IDS=$(jq -r '.jobs[] | select(.conclusion=="failure") | .id' jobs.json)
+          for JOB_ID in $FAILED_JOB_IDS; do
+            echo "----- job $JOB_ID -----" >> failed_logs.txt
+            gh api "repos/$REPO/actions/jobs/$JOB_ID/logs" >> failed_logs.txt 2>/dev/null || true
+          done
+
+          # Cap evidence size to stay well inside the free-tier TPM budget.
+          tail -c 40000 failed_logs.txt > failed_logs_trimmed.txt
+
+          gh pr view "$PR_NUMBER" --repo "$REPO" --json files \
+            --jq '.files[].path' > changed_files.txt || true
+
+          CONCLUSION=$(jq -r '.jobs[0].conclusion // "unknown"' jobs.json)
+          echo "conclusion=$CONCLUSION" >> "$GITHUB_OUTPUT"
+
+      - name: Classify with Gemini free tier
+        if: steps.pr.outputs.skip == 'false'
+        id: classify
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GEMINI_API_KEY:-}" ]; then
+            echo 'verdict={"classification":"INFRA_BLOCKED","confidence":1.0,"summary":"GEMINI_API_KEY secret is not configured."}' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          LOGS=$(cat failed_logs_trimmed.txt | jq -Rs .)
+          FILES=$(cat changed_files.txt | jq -Rs .)
+
+          INVARIANTS='1) MCP_AUTH_TOKEN (client->Worker) and CLOUDFLARE_API_TOKEN (Worker->Cloudflare) are separate secrets; CLOUDFLARE_API_TOKEN must never reach an MCP client. 2) OAuth-issued tokens must only ever see read-only tools (cf_list_zones, cf_list_dns_records, cf_list_workers, cf_get_worker_metadata, cf_kv_list_namespaces, cf_kv_get_value); write tools must stay blocked server-side for OAuth clients. 3) PKCE S256 is mandatory for OAuth public clients. 4) MCP_AUTH_TOKEN rotation is the emergency revocation path. 5) No secret may appear in logs, comments, or committed files.'
+
+          PROMPT=$(jq -n \
+            --arg invariants "$INVARIANTS" \
+            --argjson logs "$LOGS" \
+            --argjson files "$FILES" \
+            '"You are a read-only CI failure classifier for a Cloudflare Workers MCP server. Non-negotiable invariants: " + $invariants + " Classify this CI failure into exactly one of: PASS, PRODUCT_BUG, STALE_TEST, STALE_CI, MERGE_CONFLICT, ENVIRONMENT_DRIFT, FIXTURE_DRIFT, FLAKY, INFRA_BLOCKED, SECURITY_BLOCKED, AMBIGUOUS. If the failure touches any invariant above, classify SECURITY_BLOCKED regardless of anything else. Changed files: " + ($files | tostring) + ". Failed job log excerpt: " + ($logs | tostring) + ". Respond with ONLY a JSON object: {\"classification\":\"...\",\"confidence\":0.0,\"summary\":\"3-6 sentences, cite at most one short log fragment\",\"recommended_action\":\"...\"}"')
+
+          BODY=$(jq -n --arg text "$PROMPT" '{contents:[{parts:[{text:$text}]}]}')
+
+          HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$BODY")
+
+          if [ "$HTTP_CODE" = "429" ]; then
+            echo 'verdict={"classification":"QUOTA_BLOCKED","confidence":1.0,"summary":"Gemini free-tier quota exhausted for this window. No fallback to a paid provider was used."}' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "verdict={\"classification\":\"INFRA_BLOCKED\",\"confidence\":1.0,\"summary\":\"Gemini API call failed with HTTP $HTTP_CODE.\"}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          RAW_TEXT=$(jq -r '.candidates[0].content.parts[0].text // empty' response.json)
+          CLEAN=$(echo "$RAW_TEXT" | sed -e 's/^```json//' -e 's/^```//' -e 's/```$//')
+          if echo "$CLEAN" | jq -e . > /dev/null 2>&1; then
+            echo "verdict=$(echo "$CLEAN" | jq -c .)" >> "$GITHUB_OUTPUT"
+          else
+            echo "verdict={\"classification\":\"AMBIGUOUS\",\"confidence\":0.0,\"summary\":\"Model response was not valid JSON.\"}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post advisory comment
+        if: steps.pr.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          VERDICT: ${{ steps.classify.outputs.verdict }}
+        run: |
+          set -euo pipefail
+          CLASS=$(echo "$VERDICT" | jq -r '.classification // "AMBIGUOUS"')
+          CONF=$(echo "$VERDICT" | jq -r '.confidence // 0')
+          SUMMARY=$(echo "$VERDICT" | jq -r '.summary // "No summary."')
+          ACTION=$(echo "$VERDICT" | jq -r '.recommended_action // "Manual review recommended."')
+
+          {
+            echo "### CI Governor — Shadow Mode (advisory only, no changes made)"
+            echo
+            echo "**Classification:** \`$CLASS\` (confidence: $CONF)"
+            echo
+            echo "$SUMMARY"
+            echo
+            echo "**Recommended next step:** $ACTION"
+            echo
+            echo "---"
+            echo "_Read-only classifier. No code, tests, or workflows were modified. Runs on the Gemini API free tier — if quota is exhausted this reports \`QUOTA_BLOCKED\` rather than silently using a paid fallback._"
+          } > comment_body.md
+
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file comment_body.md
