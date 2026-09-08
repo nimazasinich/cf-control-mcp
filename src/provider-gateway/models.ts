@@ -141,16 +141,43 @@ export async function listAvailableModels(env: GatewayEnv): Promise<ModelListRes
 		for (const row of aliasResult.results ?? []) {
 			if (!row.public_alias || !callableIds.has(row.model_id) || seen.has(row.public_alias)) continue;
 			seen.add(row.public_alias);
-			data.push({ id: row.public_alias, object: "model", created: createdEpoch(row.created_at), owned_by: "system", enabled: true, configured: true, gateway_verified: true, callable: true });
+			data.push({
+				id: row.public_alias,
+				object: "model",
+				created: createdEpoch(row.created_at),
+				owned_by: "system",
+				enabled: true,
+				configured: true,
+				gateway_verified: true,
+				callable: true,
+			});
 		}
 		for (const row of callableRows) {
 			if (row.model_public_alias && !seen.has(row.model_public_alias)) {
 				seen.add(row.model_public_alias);
-				data.push({ id: row.model_public_alias, object: "model", created: createdEpoch(row.model_created_at), owned_by: ownerForProvider(row.id), enabled: true, configured: true, gateway_verified: true, callable: true });
+				data.push({
+					id: row.model_public_alias,
+					object: "model",
+					created: createdEpoch(row.model_created_at),
+					owned_by: ownerForProvider(row.id),
+					enabled: true,
+					configured: true,
+					gateway_verified: true,
+					callable: true,
+				});
 			}
 			if (!row.model_id || seen.has(row.model_id)) continue;
 			seen.add(row.model_id);
-			data.push({ id: row.model_id, object: "model", created: createdEpoch(row.model_created_at), owned_by: ownerForProvider(row.id), enabled: true, configured: true, gateway_verified: true, callable: true });
+			data.push({
+				id: row.model_id,
+				object: "model",
+				created: createdEpoch(row.model_created_at),
+				owned_by: ownerForProvider(row.id),
+				enabled: true,
+				configured: true,
+				gateway_verified: true,
+				callable: true,
+			});
 		}
 		return data;
 	} catch (err) {
@@ -162,10 +189,16 @@ export async function listAvailableModels(env: GatewayEnv): Promise<ModelListRes
 export async function handleModels(env: GatewayEnv): Promise<Response> {
 	try {
 		const body: ModelListResponse = { object: "list", data: await listAvailableModels(env) };
-		return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json", ...gatewayCorHeaders() } });
+		return new Response(JSON.stringify(body), {
+			status: 200,
+			headers: { "Content-Type": "application/json", ...gatewayCorHeaders() },
+		});
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
-		return new Response(JSON.stringify({ error: { message, type: "configuration_error", code: "model_registry_error" } }), { status: 503, headers: { "Content-Type": "application/json", ...gatewayCorHeaders() } });
+		return new Response(
+			JSON.stringify({ error: { message, type: "configuration_error", code: "model_registry_error" } }),
+			{ status: 503, headers: { "Content-Type": "application/json", ...gatewayCorHeaders() } },
+		);
 	}
 }
 
@@ -186,9 +219,12 @@ export async function resolveModelCandidates(model: string, env: GatewayEnv): Pr
 		return [{ modelId: resolved, freeTier: false, provider: fallbackGoogleProvider() }];
 	}
 	try {
-		const alias = await db.prepare("SELECT model_id FROM routing_rules WHERE public_alias = ?").bind(model).first<{ model_id: string }>();
+		const alias = await db.prepare("SELECT model_id FROM routing_rules WHERE public_alias = ?")
+			.bind(model).first<{ model_id: string }>();
 		const rows = await registryJoinRows(db);
-		const candidates = rows.filter((row) => providerCallability(providerFromJoin(row), modelFromJoin(row), env).callable).map(candidateFromJoin);
+		const candidates = rows
+			.filter((row) => providerCallability(providerFromJoin(row), modelFromJoin(row), env).callable)
+			.map(candidateFromJoin);
 		if (model === "auto") return candidates;
 		if (model === "free") return candidates.filter((candidate) => candidate.freeTier);
 		if (alias?.model_id) {
@@ -218,14 +254,38 @@ export async function resolveModelCandidates(model: string, env: GatewayEnv): Pr
 	}
 }
 
-const DEFAULT_MODEL_ALIASES_FOR_CANDIDATES: Record<string, string> = { fast: "gemini-3.6-flash", coding: "gemini-3.8-flash", research: "gemini-3.8-flash" };
+const DEFAULT_MODEL_ALIASES_FOR_CANDIDATES: Record<string, string> = {
+	fast: "gemini-3.6-flash",
+	coding: "gemini-3.8-flash",
+	research: "gemini-3.8-flash",
+};
 
 function fallbackGoogleProvider(): ProviderRow {
 	return {
-		id: "google-ai-studio", display_name: "Google AI Studio", kind: "google-ai-studio", provider_slug: "google-ai-studio",
-		transport: "gateway-native", auth_type: "byok", base_url: null, api_path: null, priority: 10, credential_required: 1,
-		custom_provider_id: null, test_model: null, enabled: 1, byok_alias: "default", health_state: "CONFIGURED",
-		last_success_at: null, last_error_at: null, last_error_message: null, last_latency_ms: null, last_http_status: null,
-		last_gateway_log_id: null, last_gateway_step: null, last_cf_ray: null, created_at: "", updated_at: "",
+		id: "google-ai-studio",
+		display_name: "Google AI Studio",
+		kind: "google-ai-studio",
+		provider_slug: "google-ai-studio",
+		transport: "gateway-native",
+		auth_type: "byok",
+		base_url: null,
+		api_path: null,
+		priority: 10,
+		credential_required: 1,
+		custom_provider_id: null,
+		test_model: null,
+		enabled: 1,
+		byok_alias: "default",
+		health_state: "CONFIGURED",
+		last_success_at: null,
+		last_error_at: null,
+		last_error_message: null,
+		last_latency_ms: null,
+		last_http_status: null,
+		last_gateway_log_id: null,
+		last_gateway_step: null,
+		last_cf_ray: null,
+		created_at: "",
+		updated_at: "",
 	};
 }
