@@ -11,7 +11,7 @@ MODEL="gemini-3.7-flash"; MAX_TURNS=24; MAX_RESULT=18000
 CLASSES={"PRODUCT_BUG","STALE_TEST","STALE_CI","MERGE_CONFLICT","FLAKE","INFRA","QUOTA",
 "SECURITY_SAFETY","ENVIRONMENT_DRIFT","FIXTURE_DRIFT","AMBIGUOUS"}
 BLOCKED={"GEMINI.md","SECURITY.md","package.json","package-lock.json","wrangler.toml",".gitattributes",".gitmodules",
-".github/CODEOWNERS",".github/workflows/ai-ci-governor.yml","scripts/ai_ci_governor.py"}
+".github/CODEOWNERS",".github/workflows/ai-ci-governor.yml","scripts/ai_ci_governor.py","scripts/ai_ci_verify.py"}
 SKIP={".git","node_modules","build-test",".wrangler",".ai-governor",".gemini",".governor-artifact",".governor-in"}
 INTERNAL_PREFIXES=(".git/",".ai-governor/",".gemini/",".governor-artifact/",".governor-in/","node_modules/","build-test/",".wrangler/")
 
@@ -21,7 +21,7 @@ is authoritative by default; main is integration context, not automatic truth. I
 merge-conflict state, resolve conflicts semantically and preserve head/local behavior unless evidence supports the
 base-side change. Classify failures using the allowed taxonomy. Preserve the underlying invariant when changing stale
 tests or CI. You may edit or delete product source, tests, fixtures, scripts and migrations, and may edit
-.github/workflows/ci.yml. Never edit the Governor constitution/runner, dependency manifests, git control files,
+.github/workflows/ci.yml. Never edit the Governor constitution/runner/verifier, dependency manifests, git control files,
 deployment workflows, security policy, or other .github control-plane files. Never fake PASS, fabricate data, add
 blanket continue-on-error, weaken auth, expose secrets, deploy, commit, push, call GitHub APIs, or execute repository
 code/shell commands. INFRA/QUOTA-only failures must not mutate product behavior. Use only provided bounded tools.
