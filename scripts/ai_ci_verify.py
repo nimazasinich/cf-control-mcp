@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from collections import Counter
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(os.environ.get("AI_CI_VERIFY_ROOT", str(Path(__file__).resolve().parents[1]))).resolve()
 
 
 def read(rel: str) -> str:
