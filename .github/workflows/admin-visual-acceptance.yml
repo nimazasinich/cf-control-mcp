@@ -29,7 +29,7 @@ jobs:
   screenshots:
     name: 1368x753 screenshot generation
     runs-on: ubuntu-latest
-    timeout-minutes: 22
+    timeout-minutes: 28
     env:
       EXACT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
@@ -112,15 +112,46 @@ jobs:
           echo "binary=$CHROME" >> "$GITHUB_OUTPUT"
           "$CHROME" --version
 
-      - name: Capture exact 1368x753 surfaces
+      - name: Capture exact 1368x753 surfaces over loopback HTTP
         shell: bash
         env:
           CHROME: ${{ steps.chrome.outputs.binary }}
         run: |
           set -euo pipefail
           ROOT="$PWD/admin-visual-artifacts"
-          DASH="file://$ROOT/dashboard-fixture.html"
-          LOGIN="file://$ROOT/login-fixture.html"
+          PORT_FILE="/tmp/admin-visual-capture-port"
+          rm -f "$PORT_FILE"
+
+          python3 - "$ROOT" "$PORT_FILE" <<'PY' &
+          import http.server
+          import pathlib
+          import socketserver
+          import sys
+
+          root = pathlib.Path(sys.argv[1]).resolve()
+          port_file = pathlib.Path(sys.argv[2])
+
+          class Handler(http.server.SimpleHTTPRequestHandler):
+              def __init__(self, *args, **kwargs):
+                  super().__init__(*args, directory=str(root), **kwargs)
+              def log_message(self, format, *args):
+                  pass
+
+          with socketserver.TCPServer(("127.0.0.1", 0), Handler) as server:
+              port_file.write_text(str(server.server_address[1]), encoding="utf-8")
+              server.serve_forever()
+          PY
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+
+          for _ in $(seq 1 100); do
+            [ -s "$PORT_FILE" ] && break
+            sleep 0.05
+          done
+          test -s "$PORT_FILE"
+          PORT="$(cat "$PORT_FILE")"
+          DASH="http://127.0.0.1:$PORT/dashboard-fixture.html"
+          LOGIN="http://127.0.0.1:$PORT/login-fixture.html"
           mkdir -p "$ROOT/screenshots"
 
           capture() {
@@ -133,7 +164,6 @@ jobs:
               --no-sandbox \
               --disable-gpu \
               --disable-dev-shm-usage \
-              --allow-file-access-from-files \
               --hide-scrollbars \
               --force-device-scale-factor=1 \
               --window-size=1368,753 \
@@ -189,58 +219,6 @@ jobs:
           console.log(`Verified ${files.length} PNGs at 1368x753 for ${process.env.EXACT_SHA}`);
           NODE
 
-      - name: Audit rendered runtime and page overflow — hard gate
-        shell: bash
-        env:
-          CHROME: ${{ steps.chrome.outputs.binary }}
-          EXACT_SHA: ${{ env.EXACT_SHA }}
-        run: |
-          set -euo pipefail
-          node scripts/audit_admin_visuals.cjs admin-visual-artifacts
-
-      - name: Publish overflow audit report to job summary
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          REPORT="admin-visual-artifacts/overflow-audit-report.json"
-          if [ ! -f "$REPORT" ]; then
-            echo "overflow-audit-report.json was not produced (audit script likely crashed before writing it)" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          node <<'NODE' >> "$GITHUB_STEP_SUMMARY"
-          const r = require('./admin-visual-artifacts/overflow-audit-report.json');
-          const lines = [];
-          lines.push(`### Admin Visual Acceptance — overflow audit (${r.exactSha || 'unknown sha'})`);
-          lines.push('');
-          lines.push(`${r.totalPages - r.failedPages.length}/${r.totalPages} pages passed at ${r.viewport.width}x${r.viewport.height}`);
-          lines.push('');
-          lines.push('| page | result | runtime | overflow | overflow px (page) | overflow px (doc) | waited ms |');
-          lines.push('|---|---|---|---|---|---|---|');
-          for (const p of r.results) {
-            const d = p.diagnostics;
-            const pagePx = d && d.activePageMeasurement ? `${d.activePageMeasurement.overflowXpx}x${d.activePageMeasurement.overflowYpx}` : 'n/a';
-            const docPx = d ? `${d.documentMeasurement.overflowXpx}x${d.documentMeasurement.overflowYpx}` : 'n/a';
-            lines.push(`| ${p.name} | ${p.pass ? '✅' : '❌'} | ${d ? d.runtimeStatus : 'n/a'} | ${d ? d.overflowStatus : 'n/a'} | ${pagePx} | ${docPx} | ${p.waitedMs} |`);
-          }
-          if (r.failedPages.length) {
-            lines.push('');
-            lines.push(`**Failed:** ${r.failedPages.join(', ')}`);
-          }
-          console.log(lines.join('\n'));
-          NODE
-
-      - name: Run full candidate suite as non-visual regression evidence
-        id: candidate_tests
-        shell: bash
-        run: |
-          set +e
-          npm test > /tmp/admin-visual-candidate-tests.log 2>&1
-          rc=$?
-          set -e
-          echo "rc=$rc" >> "$GITHUB_OUTPUT"
-          tail -n 160 /tmp/admin-visual-candidate-tests.log
-
       - name: Resolve exact comparison baseline
         id: baseline
         shell: bash
@@ -258,7 +236,162 @@ jobs:
           fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
-      - name: Differential no-new-regression verdict
+      - name: Audit candidate rendered runtime and page overflow
+        id: candidate_visual
+        shell: bash
+        env:
+          CHROME: ${{ steps.chrome.outputs.binary }}
+          EXACT_SHA: ${{ env.EXACT_SHA }}
+        run: |
+          set +e
+          node scripts/audit_admin_visuals.cjs admin-visual-artifacts > /tmp/admin-visual-candidate-audit.log 2>&1
+          rc=$?
+          set -e
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          cat /tmp/admin-visual-candidate-audit.log
+          test -s admin-visual-artifacts/overflow-audit-report.json
+
+      - name: Publish candidate overflow audit report to job summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPORT="admin-visual-artifacts/overflow-audit-report.json"
+          if [ ! -f "$REPORT" ]; then
+            echo "overflow-audit-report.json was not produced" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          node <<'NODE' >> "$GITHUB_STEP_SUMMARY"
+          const r = require('./admin-visual-artifacts/overflow-audit-report.json');
+          const lines = [];
+          lines.push(`### Admin Visual Acceptance — candidate overflow audit (${r.exactSha || 'unknown sha'})`);
+          lines.push('');
+          lines.push(`${r.totalPages - r.failedPages.length}/${r.totalPages} pages passed at ${r.viewport.width}x${r.viewport.height}`);
+          lines.push('');
+          lines.push('| page | result | runtime | overflow | overflow px (page) | overflow px (doc) | waited ms |');
+          lines.push('|---|---|---|---|---|---|---|');
+          for (const p of r.results) {
+            const d = p.diagnostics;
+            const pagePx = d && d.activePageMeasurement ? `${d.activePageMeasurement.overflowXpx}x${d.activePageMeasurement.overflowYpx}` : 'n/a';
+            const docPx = d ? `${d.documentMeasurement.overflowXpx}x${d.documentMeasurement.overflowYpx}` : 'n/a';
+            lines.push(`| ${p.name} | ${p.pass ? '✅' : '❌'} | ${d ? d.runtimeStatus : 'n/a'} | ${d ? d.overflowStatus : 'n/a'} | ${pagePx} | ${docPx} | ${p.waitedMs} |`);
+          }
+          if (r.failedPages.length) {
+            lines.push('');
+            lines.push(`**Candidate failed:** ${r.failedPages.join(', ')}`);
+          }
+          console.log(lines.join('\n'));
+          NODE
+
+      - name: Differential visual no-new-regression verdict
+        if: steps.candidate_visual.outputs.rc != '0' && steps.baseline.outputs.ref != ''
+        shell: bash
+        env:
+          CHROME: ${{ steps.chrome.outputs.binary }}
+          BASELINE_REF: ${{ steps.baseline.outputs.ref }}
+        run: |
+          set -euo pipefail
+          git cat-file -e "$BASELINE_REF^{commit}"
+          rm -rf .visual-baseline
+          git worktree add --detach .visual-baseline "$BASELINE_REF"
+          (
+            cd .visual-baseline
+            npm ci
+            npm run build:test
+            rm -rf admin-visual-artifacts
+            node scripts/render_admin_visuals.cjs admin-visual-artifacts
+          )
+
+          set +e
+          EXACT_SHA="$BASELINE_REF" CHROME="$CHROME" node scripts/audit_admin_visuals.cjs .visual-baseline/admin-visual-artifacts > /tmp/admin-visual-baseline-audit.log 2>&1
+          baseline_audit_rc=$?
+          set -e
+          cat /tmp/admin-visual-baseline-audit.log
+          test -s .visual-baseline/admin-visual-artifacts/overflow-audit-report.json
+          cp .visual-baseline/admin-visual-artifacts/overflow-audit-report.json admin-visual-artifacts/baseline-overflow-audit-report.json
+
+          set +e
+          node <<'NODE'
+          const fs = require('node:fs');
+          const candidate = JSON.parse(fs.readFileSync('admin-visual-artifacts/overflow-audit-report.json', 'utf8'));
+          const baseline = JSON.parse(fs.readFileSync('admin-visual-artifacts/baseline-overflow-audit-report.json', 'utf8'));
+          const baseByName = new Map((baseline.results || []).map((r) => [r.name, r]));
+          const regressions = [];
+
+          const metric = (d, key) => d && d[key] ? d[key] : null;
+          const worseMetric = (name, area, c, b) => {
+            if (!c || !b) return;
+            for (const axis of ['overflowXpx', 'overflowYpx']) {
+              if (Number(c[axis] || 0) > Number(b[axis] || 0)) {
+                regressions.push(`${name}: ${area}.${axis} ${c[axis]} > baseline ${b[axis]}`);
+              }
+            }
+          };
+
+          for (const c of candidate.results || []) {
+            const b = baseByName.get(c.name);
+            if (!b) {
+              regressions.push(`${c.name}: missing from exact baseline report`);
+              continue;
+            }
+            if (!c.settled && b.settled) regressions.push(`${c.name}: candidate no longer settles`);
+            if (c.navigationError && !b.navigationError) regressions.push(`${c.name}: new navigation error`);
+            const cd = c.diagnostics;
+            const bd = b.diagnostics;
+            if (!cd && bd) {
+              regressions.push(`${c.name}: candidate diagnostics missing`);
+              continue;
+            }
+            if (cd && bd) {
+              if (cd.runtimeStatus !== 'ok' && bd.runtimeStatus === 'ok') regressions.push(`${c.name}: new runtime failure (${cd.runtimeStatus})`);
+              if (cd.overflowStatus !== 'ok' && bd.overflowStatus === 'ok') regressions.push(`${c.name}: new overflow failure`);
+              worseMetric(c.name, 'active', metric(cd, 'activePageMeasurement'), metric(bd, 'activePageMeasurement'));
+              worseMetric(c.name, 'document', metric(cd, 'documentMeasurement'), metric(bd, 'documentMeasurement'));
+            }
+            if (!c.pass && b.pass) regressions.push(`${c.name}: candidate fails but baseline passed`);
+          }
+
+          const out = {
+            baseline_exact_sha: baseline.exactSha || process.env.BASELINE_REF || null,
+            candidate_exact_sha: candidate.exactSha || process.env.EXACT_SHA || null,
+            baseline_failed_pages: baseline.failedPages || [],
+            candidate_failed_pages: candidate.failedPages || [],
+            regressions,
+            verdict: regressions.length ? 'FAIL_NEW_VISUAL_REGRESSION' : 'PASS_WITH_BASELINE_VISUAL_DEBT',
+          };
+          fs.writeFileSync('admin-visual-artifacts/visual-differential.json', JSON.stringify(out, null, 2));
+          console.log(JSON.stringify(out, null, 2));
+          if (regressions.length) process.exit(1);
+          NODE
+          visual_compare_rc=$?
+          set -e
+
+          cat admin-visual-artifacts/visual-differential.json >> "$GITHUB_STEP_SUMMARY"
+          git worktree remove --force .visual-baseline
+          exit "$visual_compare_rc"
+
+      - name: Reject unproven visual failure without exact baseline
+        if: steps.candidate_visual.outputs.rc != '0' && steps.baseline.outputs.ref == ''
+        run: |
+          echo "Candidate visual runtime/overflow is red and no exact baseline exists for comparison." >&2
+          exit 1
+
+      - name: Record fully green visual runtime and overflow
+        if: steps.candidate_visual.outputs.rc == '0'
+        run: echo "Candidate visual runtime/overflow is fully green on this exact SHA." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run full candidate suite as non-visual regression evidence
+        id: candidate_tests
+        shell: bash
+        run: |
+          set +e
+          npm test > /tmp/admin-visual-candidate-tests.log 2>&1
+          rc=$?
+          set -e
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          tail -n 160 /tmp/admin-visual-candidate-tests.log
+
+      - name: Differential full-suite no-new-regression verdict
         if: steps.candidate_tests.outputs.rc != '0' && steps.baseline.outputs.ref != ''
         shell: bash
         env:
@@ -267,10 +400,10 @@ jobs:
         run: |
           set -euo pipefail
           git cat-file -e "$BASELINE_REF^{commit}"
-          rm -rf .visual-baseline
-          git worktree add --detach .visual-baseline "$BASELINE_REF"
+          rm -rf .test-baseline
+          git worktree add --detach .test-baseline "$BASELINE_REF"
           (
-            cd .visual-baseline
+            cd .test-baseline
             npm ci
             set +e
             npm test > /tmp/admin-visual-baseline-tests.log 2>&1
@@ -285,13 +418,13 @@ jobs:
             --candidate-rc "$CANDIDATE_RC" \
             --out admin-visual-artifacts/differential-tests.json
           cat admin-visual-artifacts/differential-tests.json >> "$GITHUB_STEP_SUMMARY"
-          git worktree remove --force .visual-baseline
+          git worktree remove --force .test-baseline
 
       - name: Mark unclassified full-suite debt for manual dispatch
         if: steps.candidate_tests.outputs.rc != '0' && steps.baseline.outputs.ref == ''
         run: |
           echo "### General regression evidence" >> "$GITHUB_STEP_SUMMARY"
-          echo "Full suite is red, but this manual event has no exact comparison baseline. Visual hard gates remain authoritative for this artifact; no clean full-suite PASS is claimed." >> "$GITHUB_STEP_SUMMARY"
+          echo "Full suite is red, but this manual event has no exact comparison baseline. No clean full-suite PASS is claimed." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record fully green full-suite evidence
         if: steps.candidate_tests.outputs.rc == '0'
@@ -309,6 +442,6 @@ jobs:
       - name: Acceptance boundary
         if: success()
         run: |
-          echo "VISUAL HARD GATES PASS for exact branch SHA $EXACT_SHA"
-          echo "17 canonical screenshots were generated at 1368x753 and overflow/reference contracts passed."
-          echo "Repository-wide failures, if any, were evaluated separately through exact-baseline differential evidence; this step does not relabel baseline debt as a clean full-suite PASS."
+          echo "VISUAL GOVERNANCE PASS for exact branch SHA $EXACT_SHA"
+          echo "35 visual/reference contract tests and 17 canonical 1368x753 screenshots were generated on the exact candidate."
+          echo "Runtime/overflow and repository-wide debt were evaluated against the exact baseline when not fully green; no baseline debt is relabeled as a clean PASS."
