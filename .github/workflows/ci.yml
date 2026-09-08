@@ -32,6 +32,7 @@ jobs:
       - name: Validate Python verification and bridge scripts
         run: >-
           python3 -m py_compile
+          scripts/ai_ci_governor.py
           scripts/oauth_smoke.py
           scripts/verify_production.py
           scripts/exec_tools_live_smoke.py
