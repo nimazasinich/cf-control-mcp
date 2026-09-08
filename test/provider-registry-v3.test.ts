@@ -81,9 +81,15 @@ function candidateDb(rows: any[]) {
 
 test("Provider catalog includes requested major providers plus custom-provider freedom", () => {
   const ids = new Set(KNOWN_PROVIDER_TEMPLATES.map((p) => p.id));
-  for (const id of ["workers-ai", "google-ai-studio", "google-antigravity", "openai", "deepseek", "openrouter", "anthropic", "groq", "mistral", "xai", "cerebras", "cohere", "huggingface", "custom"]) {
+  for (const id of ["workers-ai", "google-ai-studio", "google-relay", "google-antigravity", "openai", "deepseek", "openrouter", "anthropic", "groq", "mistral", "xai", "cerebras", "cohere", "huggingface", "custom"]) {
     assert.ok(ids.has(id), `missing provider preset: ${id}`);
   }
+  const relay = KNOWN_PROVIDER_TEMPLATES.find((p) => p.id === "google-relay");
+  assert.equal(relay?.transport, "gateway-custom");
+  assert.equal(relay?.providerSlug, "google-relay");
+  assert.equal(relay?.apiPath, "v1/chat/completions");
+  assert.equal(relay?.credentialRequired, true);
+  assert.equal(relay?.customizable, true);
   const antigravity = KNOWN_PROVIDER_TEMPLATES.find((p) => p.id === "google-antigravity");
   assert.equal(antigravity?.transport, "gateway-custom");
   assert.equal(antigravity?.customizable, true);
@@ -95,6 +101,12 @@ test("Custom provider URL is HTTPS-only and cannot hide credentials", () => {
   assert.throws(() => validateCustomProviderBaseUrl("http://api.example.com"));
   assert.throws(() => validateCustomProviderBaseUrl("https://user:secret@api.example.com"));
   assert.throws(() => validateCustomProviderBaseUrl("https://api.example.com?token=secret"));
+  assert.throws(() => validateCustomProviderBaseUrl("https://localhost"));
+  assert.throws(() => validateCustomProviderBaseUrl("https://127.0.0.1"));
+  assert.throws(() => validateCustomProviderBaseUrl("https://10.1.2.3"));
+  assert.throws(() => validateCustomProviderBaseUrl("https://172.16.0.5"));
+  assert.throws(() => validateCustomProviderBaseUrl("https://192.168.1.5"));
+  assert.throws(() => validateCustomProviderBaseUrl("ftp://api.example.com"));
 });
 
 test("Custom provider provisioning uses the official Cloudflare account API and never embeds provider token", async () => {
@@ -323,9 +335,10 @@ test("Provider catalog ids remain unique after adding the New API gateways", () 
  * flow: providers/models keyed by id, matched by SQL substring the way
  * src/admin/db.ts issues its queries.
  */
-function makeProviderRegistryDb() {
+function makeProviderRegistryDb(initialRouting: Array<{ public_alias: string; model_id: string; updated_at?: string }> = []) {
   const providers = new Map<string, any>();
   const models = new Map<string, any>();
+  const routing = new Map<string, any>(initialRouting.map((rule) => [rule.public_alias, { ...rule, updated_at: rule.updated_at ?? "2026-09-08T00:00:00Z" }]));
   const audits: any[] = [];
   const db = {
     prepare(sql: string) {
@@ -336,12 +349,13 @@ function makeProviderRegistryDb() {
           if (sql.includes("FROM providers WHERE id")) return providers.get(this.args[0]) ?? null;
           if (sql.includes("FROM models WHERE id")) return models.get(this.args[0]) ?? null;
           if (sql.includes("FROM models WHERE public_alias")) return Array.from(models.values()).find((m) => m.public_alias === this.args[0]) ?? null;
-          if (sql.includes("FROM routing_rules WHERE public_alias")) return null;
+          if (sql.includes("FROM routing_rules WHERE public_alias")) return routing.get(this.args[0]) ?? null;
           return null;
         },
         async all() {
           if (sql.includes("FROM providers")) return { results: Array.from(providers.values()) };
           if (sql.includes("FROM models")) return { results: Array.from(models.values()) };
+          if (sql.includes("FROM routing_rules")) return { results: Array.from(routing.values()) };
           if (sql.includes("FROM audit_events")) return { results: audits };
           return { results: [] };
         },
@@ -365,6 +379,8 @@ function makeProviderRegistryDb() {
             models.set(id, { id, provider_id, public_alias, enabled, free_tier, display_name, description, created_at: "2026-09-08T00:00:00Z" });
           } else if (sql.includes("DELETE FROM models WHERE provider_id")) {
             for (const [id, model] of models) if (model.provider_id === this.args[0]) models.delete(id);
+          } else if (sql.includes("INSERT INTO routing_rules")) {
+            routing.set(this.args[0], { public_alias: this.args[0], model_id: this.args[1], updated_at: "2026-09-08T00:00:00Z" });
           } else if (sql.includes("DELETE FROM providers WHERE id")) {
             providers.delete(this.args[0]);
           } else if (sql.includes("INSERT INTO audit_events")) {
@@ -380,8 +396,165 @@ function makeProviderRegistryDb() {
       return statements.map(() => ({ success: true }));
     },
   };
-  return { db, providers, models, audits };
+  return { db, providers, models, routing, audits };
 }
+
+test("Google relay preset provisions an opt-in disabled custom provider without changing native Google", async () => {
+  const { db, providers } = makeProviderRegistryDb([
+    { public_alias: "fast", model_id: "gemini-3.6-flash" },
+    { public_alias: "coding", model_id: "gemini-3.8-flash" },
+    { public_alias: "research", model_id: "gemini-3.8-flash" },
+  ]);
+  await createProvider({ DM_DB: db as any } as any, {
+    id: "google-ai-studio", displayName: "Google AI Studio", kind: "google-ai-studio",
+    providerSlug: "google-ai-studio", transport: "gateway-native", authType: "byok",
+    credentialRequired: true, enabled: true,
+  });
+  const env = {
+    MCP_AUTH_TOKEN: "tok",
+    DM_DB: db as any,
+    CLOUDFLARE_ACCOUNT_ID: "acct",
+    CLOUDFLARE_API_TOKEN: "cf-admin-token",
+    CF_AIG_GATEWAY_SLUG: "gw",
+  } as unknown as AdminEnv;
+
+  let seenCreateBody: any = null;
+  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    const href = String(url);
+    if (href.includes("/ai-gateway/custom-providers")) {
+      seenCreateBody = JSON.parse(String(init?.body || "{}"));
+      return new Response(JSON.stringify({ success: true, result: { id: "cp-google-relay", slug: "google-relay", base_url: seenCreateBody.base_url } }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ success: false }), { status: 404 });
+  }) as any;
+
+  const cookie = (await createSessionCookie(env)).split(";")[0];
+  const res = await handleAdmin(new Request("https://example.com/admin/api/providers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: cookie, Origin: "https://example.com" },
+    body: JSON.stringify({ templateId: "google-relay", baseUrl: "https://relay.example.com" }),
+  }), env);
+  const body = await res.json() as any;
+  assert.equal(res.status, 201, JSON.stringify(body));
+  assert.equal(seenCreateBody.slug, "google-relay");
+  assert.equal(seenCreateBody.base_url, "https://relay.example.com");
+
+  const relay = providers.get("google-relay");
+  assert.equal(relay.display_name, "Google via Relay");
+  assert.equal(relay.transport, "gateway-custom");
+  assert.equal(relay.auth_type, "byok");
+  assert.equal(relay.base_url, "https://relay.example.com");
+  assert.equal(relay.api_path, "v1/chat/completions");
+  assert.equal(relay.provider_slug, "custom-google-relay");
+  assert.equal(relay.credential_required, 1);
+  assert.equal(relay.enabled, 0);
+  assert.equal(relay.byok_alias, null);
+
+  const native = providers.get("google-ai-studio");
+  assert.equal(native.provider_slug, "google-ai-studio");
+  assert.equal(native.transport, "gateway-native");
+});
+
+test("Google relay provider creation rejects unsafe relay targets", async () => {
+  for (const baseUrl of ["http://relay.example.com", "https://user:pass@relay.example.com", "https://localhost", "https://192.168.0.10"]) {
+    const { db } = makeProviderRegistryDb();
+    const env = { MCP_AUTH_TOKEN: "tok", DM_DB: db as any, CLOUDFLARE_ACCOUNT_ID: "acct", CLOUDFLARE_API_TOKEN: "cf-admin-token" } as unknown as AdminEnv;
+    let fetchCalled = false;
+    globalThis.fetch = (async () => { fetchCalled = true; return new Response("{}"); }) as any;
+    const cookie = (await createSessionCookie(env)).split(";")[0];
+    const res = await handleAdmin(new Request("https://example.com/admin/api/providers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie, Origin: "https://example.com" },
+      body: JSON.stringify({ templateId: "google-relay", baseUrl }),
+    }), env);
+    assert.equal(res.status, 400);
+    assert.equal(fetchCalled, false);
+  }
+});
+
+test("Google relay credential and model registration stay redacted and do not overwrite aliases", async () => {
+  const { db, providers, models, routing, audits } = makeProviderRegistryDb([
+    { public_alias: "fast", model_id: "gemini-3.6-flash" },
+    { public_alias: "coding", model_id: "gemini-3.8-flash" },
+    { public_alias: "research", model_id: "gemini-3.8-flash" },
+  ]);
+  const env = {
+    MCP_AUTH_TOKEN: "tok",
+    DM_DB: db as any,
+    CLOUDFLARE_ACCOUNT_ID: "acct",
+    CLOUDFLARE_API_TOKEN: "cf-admin-token",
+    CF_AIG_GATEWAY_SLUG: "gw",
+  } as unknown as AdminEnv;
+
+  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    const href = String(url);
+    if (href.includes("/ai-gateway/custom-providers")) {
+      const body = JSON.parse(String(init?.body || "{}"));
+      return new Response(JSON.stringify({ success: true, result: { id: "cp-google-relay", slug: body.slug, base_url: body.base_url } }), { status: 200 });
+    }
+    if (href.endsWith("/secrets_store/stores")) return new Response(JSON.stringify({ success: true, result: [{ id: "store-1", name: "default_secrets_store" }] }), { status: 200 });
+    if (href.endsWith("/secrets_store/stores/store-1/secrets") && !init?.method) return new Response(JSON.stringify({ success: true, result: [] }), { status: 200 });
+    if (href.endsWith("/secrets_store/stores/store-1/secrets") && init?.method === "POST") return new Response(JSON.stringify({ success: true, result: [{ id: "secret-1" }] }), { status: 200 });
+    if (href.includes("/secrets_store/stores/store-1/secrets/secret-1")) return new Response(JSON.stringify({ success: true, result: { status: "active" } }), { status: 200 });
+    if (href.endsWith("/provider_configs") && !init?.method) return new Response(JSON.stringify({ success: true, result: [] }), { status: 200 });
+    if (href.endsWith("/provider_configs") && init?.method === "POST") return new Response(JSON.stringify({ success: true }), { status: 200 });
+    throw new Error(`unexpected fetch ${href}`);
+  }) as any;
+
+  const cookie = (await createSessionCookie(env)).split(";")[0];
+  const secret = "relay-secret-value";
+  const res = await handleAdmin(new Request("https://example.com/admin/api/providers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: cookie, Origin: "https://example.com" },
+    body: JSON.stringify({
+      templateId: "google-relay",
+      baseUrl: "https://relay.example.com",
+      credentialValue: secret,
+      models: [{ id: "google-relay/gemini-3.6-flash", displayName: "Relay Gemini 3.6", enabled: false }],
+    }),
+  }), env);
+  const body = await res.json() as any;
+  assert.equal(res.status, 201, JSON.stringify(body));
+  assert.equal(JSON.stringify(body).includes(secret), false);
+  assert.equal(audits.some((a) => JSON.stringify(a).includes(secret)), false);
+  assert.equal(providers.get("google-relay").byok_alias, "default");
+  assert.equal(models.get("google-relay/gemini-3.6-flash").provider_id, "google-relay");
+  assert.equal(models.get("google-relay/gemini-3.6-flash").enabled, 0);
+  assert.equal(routing.get("fast").model_id, "gemini-3.6-flash");
+  assert.equal(routing.get("coding").model_id, "gemini-3.8-flash");
+  assert.equal(routing.get("research").model_id, "gemini-3.8-flash");
+});
+
+test("Google relay creation cannot start enabled or register enabled models before health succeeds", async () => {
+  const envFor = async () => {
+    const { db } = makeProviderRegistryDb();
+    const env = { MCP_AUTH_TOKEN: "tok", DM_DB: db as any, CLOUDFLARE_ACCOUNT_ID: "acct", CLOUDFLARE_API_TOKEN: "cf-admin-token" } as unknown as AdminEnv;
+    const cookie = (await createSessionCookie(env)).split(";")[0];
+    return { env, cookie };
+  };
+  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body || "{}"));
+    return new Response(JSON.stringify({ success: true, result: { id: "cp-google-relay", slug: body.slug, base_url: body.base_url } }), { status: 200 });
+  }) as any;
+
+  const a = await envFor();
+  const providerEnabled = await handleAdmin(new Request("https://example.com/admin/api/providers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: a.cookie, Origin: "https://example.com" },
+    body: JSON.stringify({ templateId: "google-relay", baseUrl: "https://relay.example.com", enabled: true, credentialValue: "secret" }),
+  }), a.env);
+  assert.equal(providerEnabled.status, 400);
+  assert.equal((await providerEnabled.json() as any).error, "google_relay_requires_health_before_enable");
+
+  const b = await envFor();
+  const modelEnabled = await handleAdmin(new Request("https://example.com/admin/api/providers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: b.cookie, Origin: "https://example.com" },
+    body: JSON.stringify({ templateId: "google-relay", baseUrl: "https://relay.example.com", models: [{ id: "google-relay/gemini-3.6-flash" }] }),
+  }), b.env);
+  assert.equal(modelEnabled.status, 400);
+  assert.equal((await modelEnabled.json() as any).error, "google_relay_models_require_health_before_enable");
+});
 
 test("Adding a TaBiToken provider without a body baseUrl/testModel falls back to the preset defaults", async () => {
   const { db, providers } = makeProviderRegistryDb();
@@ -686,4 +859,57 @@ test("gateway-custom transport for a New API gateway routes through the Cloudfla
   } as any);
   assert.match(seenUrl, /\/v1\/acct\/gw\/custom-tabitoken\/v1\/chat\/completions$/);
   assert.equal(result.gatewayVerified, true);
+});
+
+test("Google relay successful mock call uses the Cloudflare custom-provider path", async () => {
+  const p: ProviderRow = provider({
+    id: "google-relay",
+    provider_slug: "custom-google-relay",
+    transport: "gateway-custom",
+    auth_type: "byok",
+    base_url: "https://relay.example.com",
+    api_path: "v1/chat/completions",
+    custom_provider_id: "cp-google-relay",
+    credential_required: 1,
+    byok_alias: "default",
+  });
+  let seenUrl = "";
+  let headers: Headers | null = null;
+  let body: any = null;
+  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    seenUrl = String(url);
+    headers = new Headers(init?.headers);
+    body = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "ok" } }] }), { status: 200, headers: { "cf-aig-log-id": "relay-log", "cf-aig-step": "0" } });
+  }) as any;
+  const result = await requestProviderChat(p, "google-relay/gemini-3.6-flash", { model: "google-relay/gemini-3.6-flash", messages: [{ role: "user", content: "hi" }] }, {
+    CLOUDFLARE_ACCOUNT_ID: "acct", CF_AIG_GATEWAY_SLUG: "gw", CF_AIG_TOKEN: "aig-token",
+  } as any);
+  assert.match(seenUrl, /\/v1\/acct\/gw\/custom-google-relay\/v1\/chat\/completions$/);
+  assert.equal(headers!.get("cf-aig-authorization"), "Bearer aig-token");
+  assert.equal(headers!.get("cf-aig-collect-log-payload"), "false");
+  assert.equal(body.model, "google-relay/gemini-3.6-flash");
+  assert.equal(result.gatewayVerified, true);
+  assert.equal(result.gatewayLogId, "relay-log");
+});
+
+test("Google relay health failure is not callable without gateway-verified inference", async () => {
+  const p: ProviderRow = provider({
+    id: "google-relay",
+    provider_slug: "custom-google-relay",
+    transport: "gateway-custom",
+    auth_type: "byok",
+    base_url: "https://relay.example.com",
+    api_path: "v1/chat/completions",
+    custom_provider_id: "cp-google-relay",
+    credential_required: 1,
+    byok_alias: "default",
+  });
+  globalThis.fetch = (async () => new Response(JSON.stringify({ error: { message: "relay auth failed" } }), { status: 401, headers: { "cf-aig-log-id": "relay-auth-log" } })) as any;
+  const result = await requestProviderChat(p, "google-relay/gemini-3.6-flash", { model: "google-relay/gemini-3.6-flash", messages: [{ role: "user", content: "hi" }] }, {
+    CLOUDFLARE_ACCOUNT_ID: "acct", CF_AIG_GATEWAY_SLUG: "gw", CF_AIG_TOKEN: "aig-token",
+  } as any);
+  const health = classifyProviderHealth(result);
+  assert.equal(result.gatewayVerified, true);
+  assert.equal(health.state, "AUTH_ERROR");
 });

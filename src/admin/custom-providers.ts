@@ -37,6 +37,39 @@ export function validateCustomProviderBaseUrl(value: string): string {
 	}
 	if (url.protocol !== "https:") throw new Error("custom_provider_requires_https");
 	if (url.username || url.password || url.search || url.hash) throw new Error("custom_provider_base_url_must_not_contain_credentials_or_query");
+	const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+	if (
+		hostname === "localhost" ||
+		hostname.endsWith(".localhost") ||
+		hostname.endsWith(".local") ||
+		hostname.endsWith(".internal")
+	) {
+		throw new Error("custom_provider_base_url_must_be_public");
+	}
+	const ipv4 = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+	if (ipv4) {
+		const octets = ipv4.slice(1).map(Number);
+		if (octets.some((octet) => octet > 255)) throw new Error("invalid_custom_provider_base_url");
+		const [a, b] = octets;
+		const blocked =
+			a === 0 ||
+			a === 10 ||
+			a === 127 ||
+			(a === 100 && b >= 64 && b <= 127) ||
+			(a === 169 && b === 254) ||
+			(a === 172 && b >= 16 && b <= 31) ||
+			(a === 192 && b === 168);
+		if (blocked) throw new Error("custom_provider_base_url_must_be_public");
+	}
+	if (
+		hostname === "::1" ||
+		hostname === "::" ||
+		hostname.toLowerCase().startsWith("fc") ||
+		hostname.toLowerCase().startsWith("fd") ||
+		hostname.toLowerCase().startsWith("fe80")
+	) {
+		throw new Error("custom_provider_base_url_must_be_public");
+	}
 	return url.toString().replace(/\/$/, "");
 }
 

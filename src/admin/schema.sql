@@ -149,6 +149,11 @@ VALUES
   ('cohere', 'Cohere', 'cohere', 'cohere', 'gateway-native', 'byok', 130, 1, NULL, 0, 'NOT_CONFIGURED'),
   ('huggingface', 'Hugging Face', 'huggingface', 'huggingface', 'gateway-native', 'byok', 140, 1, NULL, 0, 'NOT_CONFIGURED');
 
+INSERT OR IGNORE INTO providers
+(id, display_name, kind, provider_slug, transport, auth_type, base_url, api_path, priority, credential_required, test_model, enabled, health_state)
+VALUES
+  ('google-relay', 'Google via Relay', 'google-relay', 'google-relay', 'gateway-custom', 'byok', NULL, 'v1/chat/completions', 20, 1, 'gemini-3.6-flash', 0, 'NOT_CONFIGURED');
+
 -- OpenAI-compatible custom gateway presets introduced by migration 0004.
 INSERT OR IGNORE INTO providers
 (id, display_name, kind, provider_slug, transport, auth_type, base_url, api_path, priority, credential_required, test_model, enabled, health_state)

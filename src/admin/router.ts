@@ -144,6 +144,7 @@ async function handleCreateProvider(body: Record<string, unknown>, env: AdminEnv
 	const credentialValue = optionalString(body.credentialValue);
 	if (authType === "none" && (credentialRequired || credentialValue)) return json({ ok: false, error: "credential_not_supported_for_auth_type" }, 400);
 	if (credentialRequired && boolOrDefault(body.enabled, false) && !credentialValue) return json({ ok: false, error: "credential_required_before_enable" }, 400);
+	if (template?.id === "google-relay" && boolOrDefault(body.enabled, false)) return json({ ok: false, error: "google_relay_requires_health_before_enable" }, 400);
 
 	let apiPath: string | null;
 	try {
@@ -201,6 +202,7 @@ async function handleCreateProvider(body: Record<string, unknown>, env: AdminEnv
 			const model = item as Record<string, unknown>;
 			const modelId = optionalString(model.id);
 			if (!modelId || !MODEL_ID_RE.test(modelId)) throw new Error("invalid_model_id");
+			if (id === "google-relay" && boolOrDefault(model.enabled, true)) throw new Error("google_relay_models_require_health_before_enable");
 			const publicAlias = optionalString(model.publicAlias);
 			if (publicAlias) {
 				if (!ALIAS_RE.test(publicAlias)) throw new Error("invalid_public_alias");
