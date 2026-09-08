@@ -8,3 +8,8 @@ build-test/
 state/*.local.txt
 scripts/_gw_secret_setup.py
 admin-visual-artifacts/
+
+# AI CI Manager / Gemini CLI runtime artifacts
+.gemini/
+.ai-ci/
+gha-creds-*.json
