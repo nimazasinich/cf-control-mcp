@@ -8,3 +8,22 @@ build-test/
 state/*.local.txt
 scripts/_gw_secret_setup.py
 admin-visual-artifacts/
+
+# Adaptive CI Governor runtime artifacts
+.ai-governor/
+.governor-artifact/
+.governor-in/
+.gemini/
+gha-creds-*.json
+
+# Local secrets / one-off scripts that must never be committed
+cf-control-mcp.env.canonical
+AUTO_DEPLOY_GOOGLE_RELAY.bat
+
+# Local build/verify output logs (regenerated, not source)
+typecheck_out*.txt
+buildtest_out.txt
+providers-modal-visual-check.json
+status_now.txt
+diffstat*.txt
+*_diff.txt
