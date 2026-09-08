@@ -36,16 +36,7 @@ CI is evidence, not absolute authority. The Governor may change code, tests, fix
 
 A stale gate may be replaced only when the replacement protects the same underlying property or a demonstrably stronger property.
 
-Examples of adaptive contracts include:
-
-- stale response/status expectations
-- outdated file/path assumptions
-- obsolete snapshots/reference markers
-- old version-sync assumptions
-- environment/setup assumptions
-- redundant or superseded checks
-- flaky external checks
-- legacy compatibility checks that conflict with the current architecture
+Examples of adaptive contracts include stale response/status expectations, outdated path assumptions, obsolete snapshots/reference markers, old environment assumptions, redundant checks, flaky external checks, and legacy compatibility assertions that conflict with the current architecture.
 
 ## Hard invariants
 
@@ -67,17 +58,7 @@ A hard-invariant test may be rewritten if its implementation is stale, but the r
 
 ## Anti-cheating rules
 
-The Governor must never:
-
-- add unconditional success exits
-- add blanket `continue-on-error` to manufacture green CI
-- silently remove meaningful verification
-- fabricate fixtures/provider data to satisfy a check
-- weaken authentication or authorization because a test is inconvenient
-- expose, copy, rotate, revoke, or modify secrets
-- deploy production
-- increase a timeout merely to conceal a deterministic defect
-- claim that an agent's own statement is proof of successful verification
+The Governor must never add unconditional success exits, add blanket `continue-on-error` to manufacture green CI, silently remove meaningful verification, fabricate fixtures/provider data, weaken authentication or authorization, expose or rotate secrets, deploy production, increase a timeout merely to conceal a deterministic defect, or claim an agent statement is proof of verification.
 
 ## Control-plane protection
 
@@ -91,22 +72,24 @@ Automated repair workers may not modify:
 - `package.json`
 - `package-lock.json`
 - `wrangler.toml`
+- `.gitattributes`
+- `.gitmodules`
 - deployment workflows or other `.github/workflows/*` files
 
 The only workflow file an automated repair may change is `.github/workflows/ci.yml`, and only with a `STALE_CI` classification, explicit `ci_contract_change=true`, independent critic acceptance, and confidence of at least 0.80.
 
-Dependency/control-plane changes may be proposed for humans, but are not autonomously applied.
+Trusted changes already present on the analyzed default-branch commit may flow through a semantic merge even when they touch protected files, but the verifier requires those protected-file bytes to match that exact trusted base commit. The AI cannot alter them.
 
 ## Separation of authority
 
 The Governor has four separate stages:
 
-1. **Evidence + repair worker** — receives no GitHub write credential and may only edit the local checkout through bounded tools.
-2. **Independent critic** — read-only second model pass that attempts to falsify the repair.
-3. **Deterministic verifier** — applies the proposed patch in a fresh checkout and runs real project gates.
-4. **Mutation controller** — contains no model; it can push only the exact patch that passed the verifier and only if the branch SHA has not changed.
+1. **Evidence + repair worker** — has no GitHub write credential and no repository code-execution/shell tool. It can only inspect bounded evidence and edit allowed workspace files.
+2. **Independent critic** — a read-only second model pass that attempts to falsify the repair.
+3. **Deterministic verifier** — applies the proposed tree in a fresh checkout, without the Gemini API key, and runs the real project gates.
+4. **Mutation controller** — contains no model; it can push only the exact tree that passed the verifier and only if the analyzed branch/base SHAs have not moved.
 
-The model never decides that its own patch is "verified". Only deterministic execution can produce the verification verdict.
+The model never decides that its own patch is verified and cannot execute repository tests while the Gemini credential exists in its process. Only the isolated deterministic verifier can produce the verification verdict.
 
 ## Free-tier policy
 
@@ -120,21 +103,21 @@ The Governor is designed to operate at zero inference cost using a free-tier-eli
 
 ## Decision procedure
 
-1. Read the failing CI evidence, PR state, branch diff, merge-tree evidence, and only the repository files needed for diagnosis.
+1. Read the failing CI evidence, PR state, branch diff, three-way merge evidence, and only repository files needed for diagnosis.
 2. Determine whether the failure is product, test, CI, merge, flake, infrastructure/quota, environment, fixture, or security related.
 3. Prefer the latest head/local architecture over older default-branch assumptions when both cannot coexist.
-4. Make the smallest coherent repair when evidence supports one.
-5. Run relevant allowlisted checks during investigation when useful.
-6. Record a structured decision.
-7. If a patch exists, run an independent critic.
-8. Apply the patch in a fresh checkout and run the full deterministic verification kernel.
-9. Push only when every deterministic verification step succeeds and the branch still points to the exact analyzed SHA.
+4. For a true merge conflict, work in the prepared three-way merge workspace and resolve semantically rather than choosing all of one side.
+5. Make the smallest coherent edit when evidence supports one and record a structured decision. Do not execute repository code from the model process.
+6. If a candidate tree exists, run the independent critic.
+7. Apply the candidate tree in a fresh checkout and run the deterministic verification kernel with no Gemini key present.
+8. Push only when every deterministic verification step succeeds and the branch/base still point to the exact analyzed SHAs.
+9. For semantic conflicts, the mutation controller creates a real two-parent merge commit from the verified tree.
 10. Explicitly re-dispatch CI on the repaired branch because GitHub-token-authored pushes do not themselves create a new workflow run.
 11. Stop after three autonomous repair commits on a branch and require human direction rather than looping indefinitely.
 
 ## Deterministic verification kernel
 
-The mutation controller currently requires all of these to pass on the exact proposed patch:
+The mutation controller currently requires all of these to pass on the exact proposed tree:
 
 - `python3 -m py_compile scripts/ai_ci_governor.py`
 - `npm ci`
@@ -144,12 +127,13 @@ The mutation controller currently requires all of these to pass on the exact pro
 - `node scripts/check-version-sync.mjs`
 - `npx wrangler deploy --dry-run`
 
-These commands are execution evidence. Individual tests and CI topology may evolve, but a proposed adaptive change must still satisfy this kernel before the Governor can push it.
+Individual tests and CI topology may evolve, but an adaptive change must make its replacement contract pass this independent kernel before it can be pushed.
 
 ## Merge and branch behavior
 
 - The local/head branch is authoritative by default.
 - Resolve conflicts semantically; never blindly accept all of `ours` or all of `theirs`.
 - Preserve newer APIs, migrations, tests, and architecture from the head branch unless evidence proves they are invalid.
+- A conflict resolution is committed as a two-parent merge whose first parent is the authoritative head and whose second parent is the exact analyzed default-branch commit.
 - The Governor may create bounded repair commits on the PR branch.
 - The Governor never autonomously merges a PR into the default branch.
