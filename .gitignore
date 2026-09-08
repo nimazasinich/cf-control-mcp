@@ -9,7 +9,9 @@ state/*.local.txt
 scripts/_gw_secret_setup.py
 admin-visual-artifacts/
 
-# AI CI Manager / Gemini CLI runtime artifacts
+# Adaptive CI Governor runtime artifacts
+.ai-governor/
+.governor-artifact/
+.governor-in/
 .gemini/
-.ai-ci/
 gha-creds-*.json
