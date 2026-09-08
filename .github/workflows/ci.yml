@@ -12,24 +12,31 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
+      - name: Install candidate dependencies
         run: npm ci
 
-      - name: Typecheck Worker
-        run: npx tsc --noEmit
+      - name: Typecheck Worker — hard gate
+        run: npm run typecheck
 
-      - name: Validate Python verification and Governor scripts
+      - name: Validate verification/control scripts
         run: >-
           python3 -m py_compile
           scripts/ai_ci_governor.py
+          scripts/ai_ci_verify.py
           scripts/oauth_smoke.py
           scripts/verify_production.py
           scripts/exec_tools_live_smoke.py
@@ -37,11 +44,87 @@ jobs:
           scripts/credential_audit.py
           scripts/apex_cf_bridge.py
 
-      - name: Run Internet Intelligence tests (SSRF, providers, robots, HTML, crawl, tools)
-        run: npm run test:internet
+      - name: Hard invariant kernel
+        run: python3 scripts/ai_ci_verify.py invariants
+
+      - name: Migration contract — hard gate
+        run: python3 scripts/verify_migrations_local.py
+
+      - name: Version contract — hard gate
+        run: node scripts/check-version-sync.mjs
+
+      - name: Worker dry-run build — hard gate
+        run: npx wrangler deploy --dry-run
+
+      - name: Run candidate full test suite as evidence
+        id: candidate
+        shell: bash
+        run: |
+          set +e
+          npm test > /tmp/candidate-tests.log 2>&1
+          rc=$?
+          set -e
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          tail -n 220 /tmp/candidate-tests.log
+
+      - name: Resolve comparison baseline
+        id: baseline
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          ref=""
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            ref="$PR_BASE_SHA"
+          elif [[ "$EVENT_NAME" == "push" && -n "$PUSH_BEFORE" && "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]]; then
+            ref="$PUSH_BEFORE"
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Compare failing candidate against exact baseline debt
+        if: steps.candidate.outputs.rc != '0' && steps.baseline.outputs.ref != ''
+        shell: bash
+        env:
+          BASELINE_REF: ${{ steps.baseline.outputs.ref }}
+          CANDIDATE_RC: ${{ steps.candidate.outputs.rc }}
+        run: |
+          set -euo pipefail
+          git cat-file -e "$BASELINE_REF^{commit}"
+          rm -rf .ci-baseline
+          git worktree add --detach .ci-baseline "$BASELINE_REF"
+          (
+            cd .ci-baseline
+            npm ci
+            set +e
+            npm test > /tmp/baseline-tests.log 2>&1
+            echo $? > /tmp/baseline-tests.rc
+            set -e
+          )
+          baseline_rc="$(cat /tmp/baseline-tests.rc)"
+          python3 scripts/ai_ci_verify.py compare-tests \
+            --baseline-log /tmp/baseline-tests.log \
+            --candidate-log /tmp/candidate-tests.log \
+            --baseline-rc "$baseline_rc" \
+            --candidate-rc "$CANDIDATE_RC" \
+            --out /tmp/differential-tests.json
+          cat /tmp/differential-tests.json >> "$GITHUB_STEP_SUMMARY"
+          git worktree remove --force .ci-baseline
+
+      - name: Reject unproven failure without a comparison baseline
+        if: steps.candidate.outputs.rc != '0' && steps.baseline.outputs.ref == ''
+        run: |
+          echo "Candidate test suite failed and this event has no exact baseline for differential proof." >&2
+          exit 1
+
+      - name: Record fully green candidate
+        if: steps.candidate.outputs.rc == '0'
+        run: echo "Full test suite PASS on the candidate." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Audit production credentials (redacted, non-gating)
-        if: github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         continue-on-error: true
         env:
           CF_AIG_AUTHORIZATION: ${{ secrets.CF_AIG_AUTHORIZATION }}
