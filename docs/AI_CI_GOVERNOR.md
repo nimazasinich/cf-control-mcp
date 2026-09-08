@@ -1,6 +1,6 @@
 # Adaptive CI Governor
 
-The repository's CI repair system is designed to be intelligent without giving an AI model a GitHub write token.
+The repository's CI repair system is designed to be intelligent without giving an AI model a GitHub write token or a repository code-execution tool.
 
 ## Zero-cost runtime
 
@@ -11,49 +11,45 @@ For this public repository:
 - the default model is `gemini-3.7-flash`, which has a Free Tier;
 - there is no paid fallback.
 
-Required repository secret:
+Required repository secret: `GEMINI_API_KEY`.
 
-`GEMINI_API_KEY`
-
-Optional repository variable:
-
-`AI_CI_GOVERNOR_MODEL`
-
-Leave the variable unset to use `gemini-3.7-flash`.
+Optional repository variable: `AI_CI_GOVERNOR_MODEL`. Leave it unset to use `gemini-3.7-flash`.
 
 ## Architecture
 
 ```text
-Failed CI
+Failed CI or owner PR merge conflict
    |
    v
-Evidence collector (read-only GitHub token)
+Evidence / three-way merge collector (GitHub read only)
    |
    v
-Repair worker (Gemini API; no GitHub token)
+Repair worker (Gemini API; no GitHub token; no code execution)
    |
    v
-Independent critic (Gemini API; read-only)
+Independent critic (Gemini API; read only)
    |
    v
-Patch artifact
+Candidate-tree patch artifact
    |
    v
-Deterministic verifier in a fresh checkout
+Deterministic verifier in a fresh checkout (no Gemini key)
    |
    v
 Non-AI mutation controller
    |
-   +--> push exact verified patch
+   +--> normal verified repair commit
+   |
+   +--> or real two-parent semantic merge commit
    |
    +--> explicitly dispatch CI on the repaired branch
 ```
 
-The repair worker never commits, pushes, merges, deploys, or calls GitHub APIs. Its subprocess verification tools also run with token/key/secret-looking environment variables stripped.
+The model never commits, pushes, merges, deploys, calls GitHub APIs, or executes repository tests. This prevents repository code from running in the same process tree as the Gemini credential. All project execution happens later in the isolated verifier without `GEMINI_API_KEY`.
 
 ## What the Governor can decide
 
-The Governor classifies failures before acting:
+The Governor classifies evidence before acting:
 
 - `PRODUCT_BUG`
 - `STALE_TEST`
@@ -73,15 +69,17 @@ A stale test or stale CI rule may be updated if the underlying invariant is pres
 
 The current PR/head branch is treated as the latest local source and is authoritative by default. `main` is integration context, not automatic truth.
 
-For merge conflicts the agent receives three-way merge-tree evidence and must reconcile semantically rather than blindly choosing one side.
+For a real merge conflict, the workflow prepares a temporary three-way merge using the exact head and base SHAs. The agent edits the conflicted working tree semantically. The verifier tests the resulting tree. If it passes, the non-AI mutation controller creates a two-parent merge commit with the authoritative head as first parent and the exact analyzed base commit as second parent.
+
+This allows trusted, non-conflicting changes from `main` to flow in without allowing the AI to overwrite protected control-plane files. Protected files included by the merge must byte-match the exact trusted base commit.
 
 ## Protected control plane
 
-The worker cannot modify its own constitution/runner, security policy, package manifests, deploy workflows, or other GitHub control-plane files. `ci.yml` is the only adaptive workflow file and has additional classification/confidence/critic requirements.
+The worker cannot modify its own constitution/runner, security policy, package manifests/lockfiles, git control files, deployment workflows, or other GitHub control-plane files. `.github/workflows/ci.yml` is the only adaptive workflow file and has additional `STALE_CI`, confidence, and critic requirements.
 
 ## Verification
 
-Before a repair can be pushed, a fresh checkout must pass:
+Before a repair can be pushed, a fresh checkout with no Gemini key must pass:
 
 ```text
 python3 -m py_compile scripts/ai_ci_governor.py
@@ -93,7 +91,7 @@ node scripts/check-version-sync.mjs
 npx wrangler deploy --dry-run
 ```
 
-If any of these fails, the patch is not pushed.
+If any of these fails, the candidate tree is not pushed.
 
 ## Flakes
 
@@ -105,4 +103,6 @@ The Governor allows at most three `fix(ai-ci-governor):` repair commits between 
 
 ## CI redispatch
 
-GitHub suppresses ordinary workflow triggers caused by a push authenticated with the workflow's own `GITHUB_TOKEN`. Therefore the mutation controller explicitly dispatches `ci.yml` on the repaired branch after pushing a verified patch.
+GitHub suppresses ordinary workflow triggers caused by a push authenticated with the workflow's own `GITHUB_TOKEN`. Therefore the mutation controller explicitly dispatches `ci.yml` on the repaired branch after pushing a verified candidate.
+
+The Governor also listens to owner-only, same-repository `pull_request_target` events so a PR whose merge conflict prevents ordinary `pull_request` CI from starting can still be reconciled safely.
