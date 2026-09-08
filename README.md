@@ -8,7 +8,7 @@
 
 **Cloudflare Workers · OAuth + PKCE · Cloudflare · Hugging Face · ProxyHarvest · Internet Intelligence · Sandboxed Execution**
 
-[![Version](https://img.shields.io/badge/version-1.6.0-B8860B?style=for-the-badge)](./package.json)
+[![Version](https://img.shields.io/badge/version-1.8.0-B8860B?style=for-the-badge)](./package.json)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?style=for-the-badge&logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 [![MCP](https://img.shields.io/badge/MCP-2025--06--18-111827?style=for-the-badge)](https://modelcontextprotocol.io/)
 [![OAuth](https://img.shields.io/badge/OAuth-PKCE%20S256-7C3AED?style=for-the-badge&logo=auth0&logoColor=white)](#authentication--oauth)

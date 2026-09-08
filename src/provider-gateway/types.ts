@@ -9,8 +9,12 @@
 // ---------------------------------------------------------------------------
 
 export interface GatewayEnv {
+	/** Optional Workers AI binding for provider-token-free inference through AI Gateway. */
+	AI?: Ai;
+	/** Server-side Cloudflare API token used by the 2026 AI REST API / Unified Billing. */
+	CLOUDFLARE_API_TOKEN?: string;
 	/** Cloudflare account ID (same var as MCP worker uses). */
-	CLOUDFLARE_ACCOUNT_ID: string;
+	CLOUDFLARE_ACCOUNT_ID?: string;
 	/**
 	 * Bearer token that clients must supply to access /v1/*.
 	 * Completely separate from MCP_AUTH_TOKEN — never forwarded to Google.
@@ -34,20 +38,6 @@ export interface GatewayEnv {
 	 */
 	CF_AIG_TOKEN?: string;
 
-	/**
-	 * Legacy escape hatch only: explicitly opt in ("true") to let the Worker
-	 * call Google AI Studio directly with a locally-held key, bypassing AI
-	 * Gateway BYOK entirely. Disabled by default because it contradicts the
-	 * intended architecture (Google credential must live only in Cloudflare
-	 * AI Gateway / Secrets Store, never in the Worker).
-	 */
-	ALLOW_DIRECT_PROVIDER_KEY?: string;
-	/**
-	 * Google AI Studio API key. Only consulted when
-	 * ALLOW_DIRECT_PROVIDER_KEY === "true" for the legacy direct-call path.
-	 * Under the standard BYOK architecture this should not be set at all.
-	 */
-	GOOGLE_AI_STUDIO_KEY?: string;
 	/**
 	 * Optional D1 database binding for dynamic routing rules.
 	 */
@@ -102,6 +92,11 @@ export interface ModelObject {
 	object: "model";
 	created: number;
 	owned_by: string;
+	/** DreamWorker extension metadata; omitted by the local static fallback. */
+	enabled?: boolean;
+	configured?: boolean;
+	gateway_verified?: boolean;
+	callable?: boolean;
 }
 
 export interface ModelListResponse {

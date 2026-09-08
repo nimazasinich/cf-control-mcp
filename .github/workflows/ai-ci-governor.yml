@@ -1,0 +1,727 @@
+name: AI CI Governor
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Authoritative owner branch to analyze"
+        required: true
+        type: string
+      pr_number:
+        description: "Optional PR number"
+        required: false
+        type: string
+      failed_run_id:
+        description: "Optional failed CI run id"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-ci-governor-${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref || inputs.branch || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'failure' &&
+       (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'workflow_dispatch') &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.head_branch != github.event.repository.default_branch &&
+       (github.event.workflow_run.actor.login == github.repository_owner ||
+        github.event.workflow_run.actor.login == 'github-actions[bot]')) ||
+      (github.event_name == 'pull_request_target' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.pull_request.head.ref != github.event.repository.default_branch &&
+       github.event.pull_request.user.login == github.repository_owner &&
+       github.actor == github.repository_owner) ||
+      (github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      active: ${{ steps.applicability.outputs.active }}
+      branch: ${{ steps.meta.outputs.branch }}
+      source_sha: ${{ steps.meta.outputs.source_sha }}
+      base_sha: ${{ steps.meta.outputs.base_sha }}
+      default_branch: ${{ steps.meta.outputs.default_branch }}
+      merge_mode: ${{ steps.applicability.outputs.merge_mode }}
+      pr: ${{ steps.meta.outputs.pr }}
+      failed_run: ${{ steps.meta.outputs.failed_run }}
+      run_attempt: ${{ steps.meta.outputs.run_attempt }}
+      runtime_status: ${{ steps.final.outputs.runtime_status }}
+      has_changes: ${{ steps.final.outputs.has_changes }}
+      artifact_ready: ${{ steps.final.outputs.artifact_ready }}
+      classifications: ${{ steps.final.outputs.classifications }}
+      confidence: ${{ steps.final.outputs.confidence }}
+      requires_human: ${{ steps.final.outputs.requires_human }}
+      critic_verdict: ${{ steps.final.outputs.critic_verdict }}
+      high_confidence_flake: ${{ steps.final.outputs.high_confidence_flake }}
+    steps:
+      - name: Resolve trigger target
+        id: target
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WF_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          WF_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          WF_RUN_ID: ${{ github.event.workflow_run.id }}
+          WF_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          PRT_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PRT_PR: ${{ github.event.pull_request.number }}
+          DISPATCH_BRANCH: ${{ inputs.branch }}
+          DISPATCH_PR: ${{ inputs.pr_number }}
+          DISPATCH_RUN: ${{ inputs.failed_run_id }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            workflow_run)
+              branch="$WF_BRANCH"; pr="$WF_PR"; failed_run="$WF_RUN_ID"; run_attempt="${WF_ATTEMPT:-1}" ;;
+            pull_request_target)
+              branch="$PRT_BRANCH"; pr="$PRT_PR"; failed_run=""; run_attempt="1" ;;
+            *)
+              branch="$DISPATCH_BRANCH"; pr="$DISPATCH_PR"; failed_run="$DISPATCH_RUN"; run_attempt="1" ;;
+          esac
+          if [[ -z "$branch" || "$branch" == "$DEFAULT_BRANCH" ]]; then
+            echo "Refusing empty/default branch." >&2
+            exit 2
+          fi
+          if [[ "$branch" == refs/* || "$branch" == -* || "$branch" == *$'\n'* ]]; then
+            echo "Unsafe branch value." >&2
+            exit 2
+          fi
+          echo "event_name=$EVENT_NAME" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          echo "failed_run=$failed_run" >> "$GITHUB_OUTPUT"
+          echo "run_attempt=$run_attempt" >> "$GITHUB_OUTPUT"
+          echo "default_branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout authoritative head branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ steps.target.outputs.branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve exact branch/base state and repair budget
+        id: meta
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.target.outputs.branch }}
+          PR_NUMBER: ${{ steps.target.outputs.pr }}
+          FAILED_RUN: ${{ steps.target.outputs.failed_run }}
+          RUN_ATTEMPT: ${{ steps.target.outputs.run_attempt }}
+          DEFAULT_BRANCH: ${{ steps.target.outputs.default_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$DEFAULT_BRANCH"
+          source_sha="$(git rev-parse HEAD)"
+          base_sha="$(git rev-parse "origin/$DEFAULT_BRANCH")"
+          pr="$PR_NUMBER"
+          if [[ -z "$pr" ]]; then
+            pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number --jq '.[0].number // ""' 2>/dev/null || true)"
+          fi
+          count="$(git log "$base_sha..HEAD" --format=%s | grep -c '^fix(ai-ci-governor):' || true)"
+          [[ "$count" -lt 3 ]] && budget=true || budget=false
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "default_branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          echo "failed_run=$FAILED_RUN" >> "$GITHUB_OUTPUT"
+          echo "run_attempt=$RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          echo "budget=$budget" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether this trigger needs the Governor
+        id: applicability
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ steps.target.outputs.event_name }}
+          PR_NUMBER: ${{ steps.meta.outputs.pr }}
+        run: |
+          set -euo pipefail
+          merge_mode=false
+          if [[ -n "$PR_NUMBER" ]]; then
+            for attempt in 1 2 3; do
+              state="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json mergeable,mergeStateStatus 2>/dev/null || echo '{}')"
+              mergeable="$(jq -r '.mergeable // "UNKNOWN"' <<<"$state")"
+              merge_state="$(jq -r '.mergeStateStatus // "UNKNOWN"' <<<"$state")"
+              if [[ "$mergeable" == "CONFLICTING" || "$merge_state" == "DIRTY" ]]; then
+                merge_mode=true
+                break
+              fi
+              if [[ "$mergeable" != "UNKNOWN" && "$merge_state" != "UNKNOWN" ]]; then
+                break
+              fi
+              sleep 2
+            done
+          fi
+          if [[ "$EVENT_NAME" == "pull_request_target" && "$merge_mode" != "true" ]]; then
+            active=false
+          else
+            active=true
+          fi
+          echo "active=$active" >> "$GITHUB_OUTPUT"
+          echo "merge_mode=$merge_mode" >> "$GITHUB_OUTPUT"
+
+      - name: Record exhausted autonomous budget
+        if: steps.applicability.outputs.active == 'true' && steps.meta.outputs.budget != 'true'
+        run: |
+          mkdir -p .ai-governor
+          printf '%s\n' '{"status":"REPAIR_BUDGET_EXHAUSTED"}' > .ai-governor/runtime.json
+
+      - name: Collect bounded CI, PR and merge evidence
+        if: steps.applicability.outputs.active == 'true' && steps.meta.outputs.budget == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.meta.outputs.branch }}
+          SOURCE_SHA: ${{ steps.meta.outputs.source_sha }}
+          BASE_SHA: ${{ steps.meta.outputs.base_sha }}
+          DEFAULT_BRANCH: ${{ steps.meta.outputs.default_branch }}
+          PR_NUMBER: ${{ steps.meta.outputs.pr }}
+          FAILED_RUN: ${{ steps.meta.outputs.failed_run }}
+          MERGE_MODE: ${{ steps.applicability.outputs.merge_mode }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ai-governor
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path('.ai-governor/context.json').write_text(json.dumps({
+              'repository': os.environ['GITHUB_REPOSITORY'],
+              'authoritative_branch': os.environ['BRANCH'],
+              'source_sha': os.environ['SOURCE_SHA'],
+              'base_sha': os.environ['BASE_SHA'],
+              'default_branch': os.environ['DEFAULT_BRANCH'],
+              'pr_number': os.environ.get('PR_NUMBER',''),
+              'failed_run': os.environ.get('FAILED_RUN',''),
+              'merge_mode': os.environ.get('MERGE_MODE') == 'true',
+              'policy': 'GEMINI.md',
+          }, indent=2, sort_keys=True))
+          PY
+          git log --oneline --decorate -40 > .ai-governor/recent-commits.txt
+          git diff --stat "$BASE_SHA...HEAD" > .ai-governor/head-vs-default-stat.txt
+          git diff --name-status "$BASE_SHA...HEAD" > .ai-governor/head-vs-default-files.txt
+          merge_base="$(git merge-base HEAD "$BASE_SHA")"
+          git merge-tree "$merge_base" HEAD "$BASE_SHA" > .ai-governor/merge-tree.raw.txt || true
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('.ai-governor/merge-tree.raw.txt')
+          s=p.read_text(errors='replace') if p.exists() else ''
+          Path('.ai-governor/merge-tree.txt').write_text(s[-120000:])
+          p.unlink(missing_ok=True)
+          PY
+          if [[ -n "$PR_NUMBER" ]]; then
+            gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+              --json number,title,body,headRefName,headRefOid,baseRefName,mergeStateStatus,mergeable,statusCheckRollup \
+              > .ai-governor/pr.json || true
+          fi
+          if [[ -n "$FAILED_RUN" ]]; then
+            gh run view "$FAILED_RUN" --repo "$GITHUB_REPOSITORY" --log-failed > .ai-governor/failed.raw.log 2>&1 || \
+            gh run view "$FAILED_RUN" --repo "$GITHUB_REPOSITORY" --log > .ai-governor/failed.raw.log 2>&1 || true
+            python3 - <<'PY'
+          import re
+          from pathlib import Path
+          p=Path('.ai-governor/failed.raw.log')
+          s=p.read_text(errors='replace') if p.exists() else ''
+          patterns=[
+              (r'(?i)(authorization:\s*)(?:bearer\s+|basic\s+)?\S+', r'\1[REDACTED]'),
+              (r'(?i)((?:token|secret|api[_-]?key|password)\s*[=:]\s*)\S+', r'\1[REDACTED]'),
+              (r'\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b', '[REDACTED_JWT]'),
+          ]
+          for pat,repl in patterns: s=re.sub(pat,repl,s)
+          Path('.ai-governor/failed.log').write_text(s[-120000:])
+          p.unlink(missing_ok=True)
+          PY
+          fi
+
+      - name: Load trusted Governor runner from default branch
+        if: steps.applicability.outputs.active == 'true' && steps.meta.outputs.budget == 'true'
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ steps.meta.outputs.default_branch }}
+        run: |
+          set -euo pipefail
+          git show "origin/$DEFAULT_BRANCH:scripts/ai_ci_governor.py" > "$RUNNER_TEMP/ai_ci_governor.py"
+          python3 -m py_compile "$RUNNER_TEMP/ai_ci_governor.py"
+
+      - name: Prepare semantic merge workspace
+        id: mergeprep
+        if: steps.applicability.outputs.active == 'true' && steps.meta.outputs.budget == 'true'
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.meta.outputs.base_sha }}
+          MERGE_MODE: ${{ steps.applicability.outputs.merge_mode }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ai-governor
+          if [[ "$MERGE_MODE" != "true" ]]; then
+            : > .ai-governor/conflicts.txt
+            echo "prepared=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "Adaptive CI Governor Merge Sandbox"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          set +e
+          git merge --no-commit --no-ff "$BASE_SHA" > .ai-governor/merge-prepare.log 2>&1
+          rc=$?
+          set -e
+          git diff --name-only --diff-filter=U > .ai-governor/conflicts.txt || true
+          if [[ "$rc" -gt 1 && ! -f .git/MERGE_HEAD ]]; then
+            echo "prepared=false" >> "$GITHUB_OUTPUT"
+            printf '%s\n' '{"status":"MERGE_PREPARE_FAILED"}' > .ai-governor/runtime.json
+          else
+            echo "prepared=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check free Gemini API key
+        id: auth
+        if: >-
+          steps.applicability.outputs.active == 'true' &&
+          steps.meta.outputs.budget == 'true' &&
+          steps.mergeprep.outputs.prepared == 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [[ -n "$GEMINI_API_KEY" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            mkdir -p .ai-governor
+            printf '%s\n' '{"status":"MISSING_KEY"}' > .ai-governor/runtime.json
+          fi
+
+      - name: Run free repair reasoner with no GitHub credential or code-execution tool
+        id: repair
+        if: >-
+          steps.applicability.outputs.active == 'true' &&
+          steps.meta.outputs.budget == 'true' &&
+          steps.mergeprep.outputs.prepared == 'true' &&
+          steps.auth.outputs.ready == 'true'
+        continue-on-error: true
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOVERNOR_MODEL: ${{ vars.AI_CI_GOVERNOR_MODEL || 'gemini-3.7-flash' }}
+        run: python3 "$RUNNER_TEMP/ai_ci_governor.py" repair
+
+      - name: Detect candidate tree changes
+        id: changed
+        if: steps.applicability.outputs.active == 'true' && steps.meta.outputs.budget == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -N -- . 2>/dev/null || true
+          if [[ -n "$(git diff --name-only HEAD)" ]]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+          unresolved="$(git diff --name-only --diff-filter=U | wc -l | tr -d ' ')"
+          echo "unresolved=$unresolved" >> "$GITHUB_OUTPUT"
+          git status --short
+
+      - name: Run independent read-only critic
+        id: critic
+        if: >-
+          steps.applicability.outputs.active == 'true' &&
+          steps.meta.outputs.budget == 'true' &&
+          steps.auth.outputs.ready == 'true' &&
+          steps.changed.outputs.value == 'true' &&
+          hashFiles('.ai-governor/decision.json') != ''
+        continue-on-error: true
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOVERNOR_MODEL: ${{ vars.AI_CI_GOVERNOR_MODEL || 'gemini-3.7-flash' }}
+        run: python3 "$RUNNER_TEMP/ai_ci_governor.py" critic
+
+      - name: Finalize structured proposal
+        id: final
+        if: always() && steps.applicability.outputs.active == 'true'
+        env:
+          HAS_CHANGES: ${{ steps.changed.outputs.value }}
+          UNRESOLVED: ${{ steps.changed.outputs.unresolved }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          def load(name, default):
+              p=Path('.ai-governor')/name
+              if not p.exists(): return default
+              try: return json.loads(p.read_text())
+              except Exception: return default
+          runtime=load('runtime.json', {'status':'NO_RUNTIME'})
+          decision=load('decision.json', {})
+          critic=load('critic.json', {})
+          classes=decision.get('classifications', []) if isinstance(decision,dict) else []
+          conf=float(decision.get('confidence',0) or 0) if isinstance(decision,dict) else 0
+          human=bool(decision.get('requires_human',True)) if isinstance(decision,dict) else True
+          changes=os.environ.get('HAS_CHANGES')=='true'
+          unresolved=int(os.environ.get('UNRESOLVED') or 0)
+          verdict=str(critic.get('verdict','NONE')) if isinstance(critic,dict) else 'NONE'
+          ready=(runtime.get('status')=='OK' and changes and unresolved==0 and not human and verdict=='ACCEPT')
+          high_flake=(runtime.get('status')=='OK' and not changes and not human and set(classes)=={'FLAKE'} and conf>=0.85)
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+              f.write(f"runtime_status={runtime.get('status','UNKNOWN')}\n")
+              f.write(f"has_changes={'true' if changes else 'false'}\n")
+              f.write(f"artifact_ready={'true' if ready else 'false'}\n")
+              f.write('classifications='+json.dumps(classes,separators=(',',':'))+'\n')
+              f.write(f"confidence={conf:.4f}\n")
+              f.write(f"requires_human={'true' if human else 'false'}\n")
+              f.write(f"critic_verdict={verdict}\n")
+              f.write(f"high_confidence_flake={'true' if high_flake else 'false'}\n")
+          PY
+
+      - name: Build exact candidate tree artifact
+        if: steps.final.outputs.artifact_ready == 'true'
+        env:
+          SOURCE_SHA: ${{ steps.meta.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test -z "$(git diff --name-only --diff-filter=U)"
+          mkdir -p .governor-artifact
+          git add -A
+          git diff --cached --binary "$SOURCE_SHA" > .governor-artifact/repair.patch
+          cp .ai-governor/decision.json .governor-artifact/decision.json
+          cp .ai-governor/critic.json .governor-artifact/critic.json
+          cp .ai-governor/context.json .governor-artifact/context.json
+          test -s .governor-artifact/repair.patch
+
+      - name: Upload candidate tree artifact
+        if: steps.final.outputs.artifact_ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ai-ci-repair-${{ steps.meta.outputs.source_sha }}
+          path: .governor-artifact/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  verify:
+    needs: propose
+    if: needs.propose.outputs.artifact_ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact analyzed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.propose.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Download proposed repair
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ai-ci-repair-${{ needs.propose.outputs.source_sha }}
+          path: .governor-in
+
+      - name: Load trusted invariant verifier from default branch
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ needs.propose.outputs.default_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$DEFAULT_BRANCH"
+          git show "origin/$DEFAULT_BRANCH:scripts/ai_ci_verify.py" > "$RUNNER_TEMP/ai_ci_verify.py"
+          python3 -m py_compile "$RUNNER_TEMP/ai_ci_verify.py"
+
+      - name: Install dependencies once
+        run: npm ci
+
+      - name: Capture exact pre-repair test debt
+        id: baseline_tests
+        shell: bash
+        run: |
+          set +e
+          npm test > /tmp/governor-baseline-tests.log 2>&1
+          rc=$?
+          set -e
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          tail -n 160 /tmp/governor-baseline-tests.log
+
+      - name: Apply candidate tree and enforce autonomous mutation policy
+        shell: bash
+        env:
+          EXPECTED_SOURCE: ${{ needs.propose.outputs.source_sha }}
+          EXPECTED_BASE: ${{ needs.propose.outputs.base_sha }}
+          MERGE_MODE: ${{ needs.propose.outputs.merge_mode }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          git cat-file -e "$EXPECTED_BASE^{commit}"
+          git apply --check .governor-in/repair.patch
+          git apply .governor-in/repair.patch
+          git diff --check
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          d=json.loads(Path('.governor-in/decision.json').read_text())
+          c=json.loads(Path('.governor-in/critic.json').read_text())
+          ctx=json.loads(Path('.governor-in/context.json').read_text())
+          classes=set(d.get('classifications',[])); conf=float(d.get('confidence',0) or 0)
+          merge_mode=os.environ.get('MERGE_MODE')=='true'
+          base=os.environ['EXPECTED_BASE']
+          if ctx.get('source_sha')!=os.environ['EXPECTED_SOURCE'] or ctx.get('base_sha')!=base:
+              raise SystemExit('artifact context SHA mismatch')
+          if bool(ctx.get('merge_mode')) != merge_mode: raise SystemExit('artifact merge-mode mismatch')
+          if c.get('verdict')!='ACCEPT': raise SystemExit('critic did not ACCEPT')
+          if d.get('requires_human',True): raise SystemExit('decision requires human')
+          protected={
+              'GEMINI.md','SECURITY.md','package.json','package-lock.json','wrangler.toml','.gitattributes','.gitmodules',
+              '.github/CODEOWNERS','.github/workflows/ai-ci-governor.yml','scripts/ai_ci_governor.py','scripts/ai_ci_verify.py',
+              'scripts/verify_production.py','scripts/verify_migrations_local.py','scripts/check-version-sync.mjs',
+              'src/admin/auth.ts','src/provider-gateway/auth.ts','src/oauth-worker.ts'
+          }
+          def matches_base(f):
+              try: expected=subprocess.check_output(['git','show',f'{base}:{f}'])
+              except subprocess.CalledProcessError: return not Path(f).exists()
+              return Path(f).is_file() and Path(f).read_bytes()==expected
+          def protected_path(f):
+              return f in protected or (f.startswith('.github/') and f!='.github/workflows/ci.yml')
+          status_lines=subprocess.check_output(['git','diff','--name-status','HEAD'],text=True).splitlines()
+          files=[]
+          for line in status_lines:
+              parts=line.split('\t')
+              if not parts: continue
+              status=parts[0]
+              f=parts[-1]
+              files.append(f)
+              if protected_path(f) and not (merge_mode and matches_base(f)):
+                  raise SystemExit(f'protected control-plane/auth mutation: {f}')
+              if f.startswith('test/') and status[0] in {'M','D'} and not (merge_mode and matches_base(f)):
+                  if 'STALE_TEST' not in classes or conf < 0.80:
+                      raise SystemExit(f'existing test mutation requires STALE_TEST confidence >= 0.80: {f}')
+              p=Path(f)
+              if p.is_file() and p.stat().st_size <= 2_000_000:
+                  try: text=p.read_text()
+                  except UnicodeDecodeError: text=''
+                  for marker in ('<<<<<<<','>>>>>>>'):
+                      if any(line.startswith(marker) for line in text.splitlines()):
+                          raise SystemExit(f'unresolved conflict marker in {f}')
+                  if any(line == '=======' for line in text.splitlines()):
+                      raise SystemExit(f'unresolved conflict marker in {f}')
+          if not files: raise SystemExit('empty patch')
+          if merge_mode:
+              if 'MERGE_CONFLICT' not in classes: raise SystemExit('semantic merge requires MERGE_CONFLICT classification')
+              if conf < 0.75: raise SystemExit('semantic merge requires confidence >= 0.75')
+          ci='.github/workflows/ci.yml'
+          if ci in files and not (merge_mode and matches_base(ci)):
+              if 'STALE_CI' not in classes: raise SystemExit('ci.yml requires STALE_CI classification')
+              if not d.get('ci_contract_change',False): raise SystemExit('ci.yml requires ci_contract_change=true')
+              if conf < 0.80: raise SystemExit('ci.yml change requires confidence >= 0.80')
+          if classes and classes <= {'INFRA','QUOTA','FLAKE'}:
+              raise SystemExit('transient-only diagnosis cannot mutate source')
+          if conf < 0.60: raise SystemExit('repair confidence below 0.60')
+          print('policy accepted:', ', '.join(files))
+          PY
+
+      - name: Compile protected control scripts
+        run: |
+          python3 -m py_compile scripts/ai_ci_governor.py scripts/ai_ci_verify.py
+
+      - name: Typecheck — hard gate
+        run: npm run typecheck
+
+      - name: Hard invariant kernel from trusted default-branch verifier
+        env:
+          AI_CI_VERIFY_ROOT: ${{ github.workspace }}
+        run: python3 "$RUNNER_TEMP/ai_ci_verify.py" invariants
+
+      - name: Migration contract — hard gate
+        run: python3 scripts/verify_migrations_local.py
+
+      - name: Version contract — hard gate
+        run: node scripts/check-version-sync.mjs
+
+      - name: Worker dry-run build — hard gate
+        run: npx wrangler deploy --dry-run
+
+      - name: Capture candidate full test suite
+        id: candidate_tests
+        shell: bash
+        run: |
+          set +e
+          npm test > /tmp/governor-candidate-tests.log 2>&1
+          rc=$?
+          set -e
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          tail -n 180 /tmp/governor-candidate-tests.log
+
+      - name: Differential no-regression test verdict
+        env:
+          AI_CI_VERIFY_ROOT: ${{ github.workspace }}
+          BASELINE_RC: ${{ steps.baseline_tests.outputs.rc }}
+          CANDIDATE_RC: ${{ steps.candidate_tests.outputs.rc }}
+        run: |
+          python3 "$RUNNER_TEMP/ai_ci_verify.py" compare-tests \
+            --baseline-log /tmp/governor-baseline-tests.log \
+            --candidate-log /tmp/governor-candidate-tests.log \
+            --baseline-rc "$BASELINE_RC" \
+            --candidate-rc "$CANDIDATE_RC" \
+            --out /tmp/governor-differential.json
+          cat /tmp/governor-differential.json >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    needs: [propose, verify]
+    if: needs.verify.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout authoritative branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.propose.outputs.branch }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Abort if analyzed head or base moved
+        shell: bash
+        env:
+          EXPECTED_SOURCE: ${{ needs.propose.outputs.source_sha }}
+          EXPECTED_BASE: ${{ needs.propose.outputs.base_sha }}
+          DEFAULT_BRANCH: ${{ needs.propose.outputs.default_branch }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE" || { echo "Head moved; refusing stale repair." >&2; exit 3; }
+          git fetch --no-tags origin "$DEFAULT_BRANCH"
+          test "$(git rev-parse "origin/$DEFAULT_BRANCH")" = "$EXPECTED_BASE" || {
+            echo "Base moved; refusing stale evidence-backed repair." >&2
+            exit 4
+          }
+
+      - name: Download verified repair
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ai-ci-repair-${{ needs.propose.outputs.source_sha }}
+          path: .governor-in
+
+      - name: Apply exact verified tree and push
+        shell: bash
+        env:
+          BRANCH: ${{ needs.propose.outputs.branch }}
+          SOURCE_SHA: ${{ needs.propose.outputs.source_sha }}
+          BASE_SHA: ${{ needs.propose.outputs.base_sha }}
+          MERGE_MODE: ${{ needs.propose.outputs.merge_mode }}
+          CLASSIFICATIONS: ${{ needs.propose.outputs.classifications }}
+        run: |
+          set -euo pipefail
+          git apply --check .governor-in/repair.patch
+          git apply .governor-in/repair.patch
+          git config user.name "Adaptive CI Governor"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if [[ "$MERGE_MODE" == "true" ]]; then
+            tree="$(git write-tree)"
+            commit="$(printf 'fix(ai-ci-governor): semantic merge %s\n' "$CLASSIFICATIONS" | git commit-tree "$tree" -p "$SOURCE_SHA" -p "$BASE_SHA")"
+            git reset --hard "$commit"
+          else
+            git commit -m "fix(ai-ci-governor): evidence-backed ${CLASSIFICATIONS}"
+          fi
+          git push origin "HEAD:$BRANCH"
+
+      - name: Explicitly redispatch CI on repaired branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ needs.propose.outputs.branch }}
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+
+  retry_flake:
+    needs: propose
+    if: >-
+      needs.propose.result == 'success' &&
+      needs.propose.outputs.active == 'true' &&
+      needs.propose.outputs.high_confidence_flake == 'true' &&
+      needs.propose.outputs.run_attempt == '1' &&
+      needs.propose.outputs.failed_run != ''
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Perform one unchanged failed-job retry
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILED_RUN: ${{ needs.propose.outputs.failed_run }}
+        run: gh run rerun "$FAILED_RUN" --repo "$GITHUB_REPOSITORY" --failed
+
+  report:
+    needs: [propose, verify, apply, retry_flake]
+    if: >-
+      always() &&
+      needs.propose.result != 'skipped' &&
+      needs.propose.outputs.active == 'true' &&
+      needs.propose.outputs.pr != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Report evidence-backed outcome
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.propose.outputs.pr }}
+          RUNTIME_STATUS: ${{ needs.propose.outputs.runtime_status }}
+          CLASSES: ${{ needs.propose.outputs.classifications }}
+          CONFIDENCE: ${{ needs.propose.outputs.confidence }}
+          HUMAN: ${{ needs.propose.outputs.requires_human }}
+          CRITIC: ${{ needs.propose.outputs.critic_verdict }}
+          HAS_CHANGES: ${{ needs.propose.outputs.has_changes }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          APPLY_RESULT: ${{ needs.apply.result }}
+          RETRY_RESULT: ${{ needs.retry_flake.result }}
+          MERGE_MODE: ${{ needs.propose.outputs.merge_mode }}
+        run: |
+          if [[ "$APPLY_RESULT" == "success" && "$MERGE_MODE" == "true" ]]; then
+            msg="🤖 Adaptive CI Governor v2 created a semantic two-parent merge resolution (${CLASSES}, confidence ${CONFIDENCE}). Hard invariants passed and the candidate introduced no new test regression relative to the exact pre-repair tree. CI was redispatched."
+          elif [[ "$APPLY_RESULT" == "success" ]]; then
+            msg="🤖 Adaptive CI Governor v2 applied an independently criticized repair (${CLASSES}, confidence ${CONFIDENCE}). Hard invariants passed and differential testing found no new regression relative to the exact pre-repair tree. CI was redispatched."
+          elif [[ "$RETRY_RESULT" == "success" ]]; then
+            msg="🤖 Adaptive CI Governor v2 classified this as a high-confidence FLAKE and requested one unchanged failed-job retry. A retry PASS remains flake evidence, not a first-run PASS."
+          elif [[ "$RUNTIME_STATUS" == "MISSING_KEY" ]]; then
+            msg="🤖 Adaptive CI Governor v2 is BLOCKED: repository secret GEMINI_API_KEY is missing. No source or CI policy was changed."
+          elif [[ "$RUNTIME_STATUS" == "QUOTA" ]]; then
+            msg="🤖 Adaptive CI Governor v2 is QUOTA-blocked on the free Gemini tier. It did not fall back to a paid model and made no verified repair."
+          elif [[ "$RUNTIME_STATUS" == "REPAIR_BUDGET_EXHAUSTED" ]]; then
+            msg="🤖 Adaptive CI Governor v2 stopped after three autonomous repair commits on this branch. Human direction is required; no gate was bypassed."
+          elif [[ "$RUNTIME_STATUS" == "MERGE_PREPARE_FAILED" ]]; then
+            msg="🤖 Adaptive CI Governor v2 detected a conflict but could not construct a safe three-way merge workspace. No mutation was pushed."
+          elif [[ "$VERIFY_RESULT" == "failure" ]]; then
+            msg="🤖 Adaptive CI Governor v2 proposed a repair (${CLASSES}, confidence ${CONFIDENCE}), but the independent invariant/differential verification kernel rejected it. Nothing was pushed."
+          elif [[ "$CRITIC" == "REJECT" || "$CRITIC" == "ESCALATE" ]]; then
+            msg="🤖 Adaptive CI Governor v2 proposed changes, but the independent critic returned ${CRITIC}. Nothing was pushed."
+          elif [[ "$HUMAN" == "true" ]]; then
+            msg="🤖 Adaptive CI Governor v2 classified the evidence as ${CLASSES} but marked it insufficient/risky for autonomous mutation. Human direction is required."
+          elif [[ "$HAS_CHANGES" == "false" ]]; then
+            msg="🤖 Adaptive CI Governor v2 analyzed the evidence (${CLASSES}, confidence ${CONFIDENCE}) and produced no source/CI mutation. No PASS is being claimed."
+          else
+            msg="🤖 Adaptive CI Governor v2 did not produce an applicable verified repair. Runtime=${RUNTIME_STATUS}, critic=${CRITIC}, verify=${VERIFY_RESULT}. No PASS is being claimed."
+          fi
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$msg"
