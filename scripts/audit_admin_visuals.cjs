@@ -2,31 +2,13 @@
  * VISUAL_ACCEPTANCE_FIXTURE_ONLY (test-only CI tooling; never imported by the Worker)
  *
  * Deterministic runtime/overflow audit for the Admin UI dashboard fixture.
- *
- * Replaces the previous `--dump-dom` + `--virtual-time-budget` single-shot check.
- * That approach had three problems this script fixes:
- *
- *   1. It exited on the FIRST failing page (`set -euo pipefail` + `exit 1` inside
- *      a loop), so a single bad page hid the state of every other page.
- *   2. On failure it only printed a page name — no actual measurements, no
- *      diagnostic evidence of what overflowed or why the runtime didn't settle.
- *   3. It relied on Chrome's `--virtual-time-budget` to "fast forward" past the
- *      in-page settle timer before taking a `--dump-dom` snapshot. That is a
- *      fixed budget, not a readiness check: if the page hadn't finished setting
- *      `data-visual-runtime` / `data-visual-overflow` by the time the budget
- *      elapsed, the snapshot simply missed it — a race, not a real assertion.
- *
- * This script checks every page, always reports every result together, and
- * uses Puppeteer's `waitForFunction` (real bounded polling against the actual
- * DOM, not a virtual clock) to wait for the in-page fixture script to finish
- * writing `data-visual-runtime` / `data-visual-overflow` on <html>. It never
- * widens the bound to "fix" a flake — a page that doesn't settle within the
- * bound is reported as a failure with full diagnostics, not silently retried
- * with more time.
+ * The fixture is served from a loopback-only ephemeral HTTP origin so browser
+ * History API calls such as replaceState('/admin/...') behave like production.
  */
 "use strict";
 
 const fs = require("node:fs");
+const http = require("node:http");
 const path = require("node:path");
 const puppeteer = require("puppeteer-core");
 
@@ -35,7 +17,7 @@ const MAX_WAIT_MS = Number(process.env.ADMIN_VISUAL_AUDIT_MAX_WAIT_MS || 8000);
 const POLL_MS = Number(process.env.ADMIN_VISUAL_AUDIT_POLL_MS || 100);
 
 const outDir = path.resolve(process.argv[2] || "admin-visual-artifacts");
-const dashUrl = `file://${path.join(outDir, "dashboard-fixture.html")}`;
+const dashFile = path.join(outDir, "dashboard-fixture.html");
 
 const PAGES = [
   { name: "overview", hash: "overview" },
@@ -52,13 +34,61 @@ const PAGES = [
   { name: "settings-boundary", hash: "settings", settingsView: "boundary" },
 ];
 
-function buildUrl(page) {
-  const params = new URLSearchParams({ visualState: "normal" });
-  if (page.settingsView) params.set("settingsView", page.settingsView);
-  return `${dashUrl}?${params.toString()}#${page.hash}`;
+function startFixtureServer() {
+  const html = fs.readFileSync(dashFile);
+  const server = http.createServer((req, res) => {
+    let pathname = "/";
+    try {
+      pathname = new URL(req.url || "/", "http://127.0.0.1").pathname;
+    } catch {
+      res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("bad request");
+      return;
+    }
+
+    if (pathname === "/dashboard-fixture.html" || pathname === "/admin" || pathname.startsWith("/admin/")) {
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Content-Length": html.length,
+      });
+      res.end(html);
+      return;
+    }
+
+    if (pathname === "/favicon.ico") {
+      res.writeHead(204, { "Cache-Control": "no-store" });
+      res.end();
+      return;
+    }
+
+    res.writeHead(404, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    res.end(JSON.stringify({ ok: false, error: "fixture_route_not_found" }));
+  });
+
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close();
+        reject(new Error("failed to resolve loopback fixture server address"));
+        return;
+      }
+      resolve({ server, origin: `http://127.0.0.1:${address.port}` });
+    });
+  });
 }
 
-/** Pull every diagnostic we might need, whether the page settled or not. */
+function buildUrl(origin, page) {
+  const params = new URLSearchParams({ visualState: "normal" });
+  if (page.settingsView) params.set("settingsView", page.settingsView);
+  return `${origin}/dashboard-fixture.html?${params.toString()}#${page.hash}`;
+}
+
 async function collectDiagnostics(page) {
   return page.evaluate(() => {
     const root = document.documentElement;
@@ -92,8 +122,8 @@ async function collectDiagnostics(page) {
   });
 }
 
-async function auditPage(browser, page) {
-  const url = buildUrl(page);
+async function auditPage(browser, origin, page) {
+  const url = buildUrl(origin, page);
   const started = Date.now();
   const tab = await browser.newPage();
   await tab.setViewport(VIEWPORT);
@@ -113,7 +143,7 @@ async function auditPage(browser, page) {
         { timeout: MAX_WAIT_MS, polling: POLL_MS }
       );
       settled = true;
-    } catch (waitErr) {
+    } catch {
       timedOut = true;
     }
   } catch (gotoErr) {
@@ -160,26 +190,18 @@ function formatResult(r) {
   if (r.diagnostics) {
     const d = r.diagnostics;
     lines.push(`  data-visual-runtime="${d.runtimeStatus}"  data-visual-overflow="${d.overflowStatus}"`);
-    if (d.runtimeErrors.length) {
-      lines.push(`  runtime errors captured in-page: ${JSON.stringify(d.runtimeErrors)}`);
-    }
-    if (r.consoleErrors.length) {
-      lines.push(`  uncaught page errors: ${JSON.stringify(r.consoleErrors)}`);
-    }
+    if (d.runtimeErrors.length) lines.push(`  runtime errors captured in-page: ${JSON.stringify(d.runtimeErrors)}`);
+    if (r.consoleErrors.length) lines.push(`  uncaught page errors: ${JSON.stringify(r.consoleErrors)}`);
     if (!d.activePageFound) {
       lines.push(`  WARNING: no element matched ".page.active" — active page measurement unavailable`);
     } else {
       const p = d.activePageMeasurement;
-      lines.push(
-        `  active page: scroll=${p.scrollW}x${p.scrollH} client=${p.clientW}x${p.clientH} overflow=${p.overflowXpx}x${p.overflowYpx}px`
-      );
+      lines.push(`  active page: scroll=${p.scrollW}x${p.scrollH} client=${p.clientW}x${p.clientH} overflow=${p.overflowXpx}x${p.overflowYpx}px`);
     }
     const doc = d.documentMeasurement;
-    lines.push(
-      `  document root: scroll=${doc.scrollW}x${doc.scrollH} viewport=${doc.clientW}x${doc.clientH} overflow=${doc.overflowXpx}x${doc.overflowYpx}px`
-    );
+    lines.push(`  document root: scroll=${doc.scrollW}x${doc.scrollH} viewport=${doc.clientW}x${doc.clientH} overflow=${doc.overflowXpx}x${doc.overflowYpx}px`);
   } else {
-    lines.push(`  no diagnostics collected (navigation/evaluation failed before measurement)`);
+    lines.push("  no diagnostics collected (navigation/evaluation failed before measurement)");
   }
   return lines.join("\n");
 }
@@ -190,40 +212,45 @@ async function main() {
     console.error("CHROME env var not set — expected the path to a Chrome/Chromium binary");
     process.exit(1);
   }
-  if (!fs.existsSync(dashUrl.replace("file://", ""))) {
-    console.error(`dashboard fixture not found at ${dashUrl}`);
+  if (!fs.existsSync(dashFile)) {
+    console.error(`dashboard fixture not found at ${dashFile}`);
     process.exit(1);
   }
 
-  const browser = await puppeteer.launch({
-    executablePath,
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-gpu",
-      "--disable-dev-shm-usage",
-      "--force-color-profile=srgb",
-      "--hide-scrollbars",
-    ],
-  });
+  const { server, origin } = await startFixtureServer();
+  console.log(`Admin visual fixture origin: ${origin}`);
 
+  let browser = null;
   const results = [];
   try {
+    browser = await puppeteer.launch({
+      executablePath,
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+        "--force-color-profile=srgb",
+        "--hide-scrollbars",
+      ],
+    });
+
     for (const page of PAGES) {
-      // Sequential on purpose: each page gets the full MAX_WAIT_MS budget on
-      // its own, and a slow/stuck page can never starve the ones after it.
+      // Sequential on purpose: every page receives the same bounded budget.
       // eslint-disable-next-line no-await-in-loop
-      const result = await auditPage(browser, page);
+      const result = await auditPage(browser, origin, page);
       results.push(result);
       console.log(formatResult(result));
     }
   } finally {
-    await browser.close().catch(() => {});
+    if (browser) await browser.close().catch(() => {});
+    await new Promise((resolve) => server.close(resolve));
   }
 
   const failed = results.filter((r) => !r.pass);
   const report = {
     exactSha: process.env.EXACT_SHA || null,
+    fixtureOrigin: origin,
     viewport: VIEWPORT,
     maxWaitMs: MAX_WAIT_MS,
     pollMs: POLL_MS,
@@ -231,10 +258,7 @@ async function main() {
     failedPages: failed.map((r) => r.name),
     results,
   };
-  fs.writeFileSync(
-    path.join(outDir, "overflow-audit-report.json"),
-    JSON.stringify(report, null, 2)
-  );
+  fs.writeFileSync(path.join(outDir, "overflow-audit-report.json"), JSON.stringify(report, null, 2));
 
   console.log("\n=== SUMMARY ===");
   console.log(`${results.length - failed.length}/${results.length} pages passed`);
