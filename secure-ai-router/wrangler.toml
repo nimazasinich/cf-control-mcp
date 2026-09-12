@@ -1,0 +1,15 @@
+name = "secure-ai-router"
+main = "src/worker.ts"
+compatibility_date = "2026-09-12"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "secure-ai-router-db"
+database_id = "b6bc440e-1b35-4972-907d-89a859c42adb"
+
+[vars]
+ENVIRONMENT = "production"
+
+[triggers]
+crons = ["*/5 * * * *"]
