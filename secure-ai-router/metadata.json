@@ -1,0 +1,6 @@
+{
+  "name": "Cloudflare AI Router",
+  "description": "Secure AI Traffic Control Plane with intelligent provider routing, AI firewall, and real-time health monitoring.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

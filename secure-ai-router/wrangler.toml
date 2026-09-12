@@ -1,15 +1,17 @@
-name = "secure-ai-router"
+name = "cf-control-mcp"
 main = "src/worker.ts"
 compatibility_date = "2026-09-12"
 compatibility_flags = ["nodejs_compat"]
 
+# D1 Database — production DB (DM_DB, account 324f9984b34bf5d39a778c9753c49632)
 [[d1_databases]]
 binding = "DB"
-database_name = "secure-ai-router-db"
-database_id = "b6bc440e-1b35-4972-907d-89a859c42adb"
+database_name = "DM_DB"
+database_id = "138a2aef-9f5a-4635-8346-dc474fdfff93"
 
 [vars]
 ENVIRONMENT = "production"
 
+# Cron trigger: runs scheduled() in worker.ts every 5 minutes for provider health checks.
 [triggers]
 crons = ["*/5 * * * *"]
