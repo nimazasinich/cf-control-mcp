@@ -47,6 +47,6 @@ jobs:
       - name: Smoke test
         run: |
           sleep 5
-          code=$(curl -s -o /dev/null -w '%{http_code}' https://secure-ai-router.amin-chinisaz-edu.workers.dev/api/health)
+          code=$(curl -s -o /dev/null -w '%{http_code}' https://cf-control-mcp.amin-chinisaz-edu.workers.dev/api/health)
           echo "Health check: HTTP $code"
           [ "$code" = "200" ] && echo "PASS" || (echo "FAIL - got $code" && exit 1)
