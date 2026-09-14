@@ -15,31 +15,73 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Probe deployed OmniRoute public auth contract
+      - name: Verify deployed OmniRoute public contract
         run: |
           set -euo pipefail
           base='https://omniroute-edge.amin-chinisaz-edu.workers.dev'
           nonce="$(date +%s%N)"
-          probe() {
-            path="$1"
-            label="$2"
-            echo "=== $label $path ==="
+
+          fetch_code() {
+            path="$1"; label="$2"
             curl -sS \
               -H 'Cache-Control: no-cache, no-store, max-age=0' \
               -H 'Pragma: no-cache' \
               -H 'Cookie:' \
               -D "/tmp/${label}.headers" \
               -o "/tmp/${label}.body" \
-              -w 'HTTP %{http_code}\n' \
+              -w '%{http_code}' \
               "$base$path?probe=$nonce"
-            echo '-- headers --'
-            grep -Ei '^(HTTP/|content-type:|cache-control:|cf-cache-status:|set-cookie:|server:)' "/tmp/${label}.headers" || true
-            echo '-- body --'
-            cat "/tmp/${label}.body"
-            echo
           }
-          probe '/api/health' health
-          probe '/api/auth/status' auth_status
-          probe '/api/auth/session' auth_session
-          probe '/api/v2/system/status' system_status
-          probe '/v1/models' v1_models
+
+          assert_code() {
+            path="$1"; label="$2"; expected="$3"
+            code="$(fetch_code "$path" "$label")"
+            echo "$path HTTP $code"
+            test "$code" = "$expected"
+          }
+
+          assert_code '/' root 200
+          grep -Fq '/assets/' /tmp/root.body
+          assert_code '/signin' signin 200
+          grep -Fq '/assets/' /tmp/signin.body
+          assert_code '/dashboard-hub.png' dashboard_hub 200
+
+          assert_code '/api/health' health 200
+          python - <<'PY'
+          import json
+          body=json.load(open('/tmp/health.body'))
+          assert body == {'status':'ok'}, body
+          PY
+
+          assert_code '/api/auth/status' auth_status 200
+          python - <<'PY'
+          import json
+          body=json.load(open('/tmp/auth_status.body'))
+          assert body.get('authenticated') is False, body
+          assert body.get('user') is None, body
+          assert isinstance(body.get('bootstrapRequired'), bool), body
+          PY
+
+          assert_code '/api/auth/session' auth_session 401
+          python - <<'PY'
+          import json
+          body=json.load(open('/tmp/auth_session.body'))
+          assert body.get('error',{}).get('code') == 'AUTH_REQUIRED', body
+          PY
+
+          assert_code '/api/v2/system/status' system_status 401
+          python - <<'PY'
+          import json
+          body=json.load(open('/tmp/system_status.body'))
+          assert body.get('error',{}).get('code') == 'AUTH_REQUIRED', body
+          PY
+
+          assert_code '/v1/models' v1_models 401
+          python - <<'PY'
+          import json
+          body=json.load(open('/tmp/v1_models.body'))
+          assert body.get('error',{}).get('type') == 'invalid_api_key', body
+          PY
+
+          echo 'OMNIROUTE PUBLIC PRODUCTION VERIFICATION PASS'
+          echo 'Inference remains BLOCKED / NOT CONFIGURED while OMNIROUTE_ORIGIN is empty.'
