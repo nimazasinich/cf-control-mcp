@@ -19,17 +19,17 @@ import { applyReadabilityControls } from "./ui/readability-controls";
 export function dashboardHtml(): string {
   return applyReadabilityControls(
     applyVisualAcceptanceFixes(
-      applyCorePagesCanonical(
-        applyFidelityIntegrity(
-          applyOverviewFidelity(
-            applyToolsFidelity(
-              applyRoutingFidelity(
-                applyUsageFidelity(
-                  applySettingsFidelity(
-                    applyAuditFidelity(
-                      applyHealthFidelity(
-                        applyLoadingFidelity(
-                          applyProvidersFidelity(
+      applyProvidersFidelity(
+        applyCorePagesCanonical(
+          applyFidelityIntegrity(
+            applyOverviewFidelity(
+              applyToolsFidelity(
+                applyRoutingFidelity(
+                  applyUsageFidelity(
+                    applySettingsFidelity(
+                      applyAuditFidelity(
+                        applyHealthFidelity(
+                          applyLoadingFidelity(
                             applyModelsFidelity(baseDashboardHtml()),
                           ),
                         ),
