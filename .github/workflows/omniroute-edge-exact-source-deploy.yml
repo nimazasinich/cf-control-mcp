@@ -5,7 +5,7 @@ on:
     branches:
       - deploy/omniroute-edge-ui-20260914
     paths:
-      - 'deploy-artifacts/omniroute-edge-exact/READY'
+      - 'deploy-artifacts/omniroute-edge-exact-xz/READY'
 
 permissions:
   contents: read
@@ -31,11 +31,11 @@ jobs:
       - name: Reassemble exact sanitized source
         run: |
           set -euo pipefail
-          cat deploy-artifacts/omniroute-edge-exact/part-*.b64 | base64 -d > /tmp/omniroute-edge.zip
-          echo 'b8f600d79ecbd55507f14568e4dced1dd55b2499ceb74bbee7c5af94c0d8eb7f  /tmp/omniroute-edge.zip' | sha256sum -c -
+          cat deploy-artifacts/omniroute-edge-exact-xz/part-*.b64 | base64 -d > /tmp/omniroute-edge.tar.xz
+          echo 'db08798a4e24ac2c3199a098c5f2a353d84b74be8a1e80581e1bac81a234274d  /tmp/omniroute-edge.tar.xz' | sha256sum -c -
           rm -rf deploy-src
           mkdir deploy-src
-          unzip -q /tmp/omniroute-edge.zip -d deploy-src
+          tar -xJf /tmp/omniroute-edge.tar.xz -C deploy-src
           test "$(find deploy-src -type f | wc -l | tr -d ' ')" = '156'
           mkdir -p deploy-src/public
           cp secure-ai-router/public/dashboard-hub.png deploy-src/public/dashboard-hub.png
@@ -48,7 +48,7 @@ jobs:
           test -f deploy-src/src/server/browserAuth.ts
           test -f deploy-src/public/dashboard-hub.png
           test -f deploy-src/VERIFY-AND-BUILD.cmd
-          rm -f /tmp/omniroute-edge.zip
+          rm -f /tmp/omniroute-edge.tar.xz
 
       - name: Sanitized bundle safety gate
         working-directory: deploy-src
