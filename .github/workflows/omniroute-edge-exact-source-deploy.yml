@@ -35,7 +35,7 @@ jobs:
           set -euo pipefail
           test -n "$MCP_AUTH_TOKEN"
           cat deploy-artifacts/chunks/part* | base64 -d > /tmp/omniroute-edge.enc
-          echo '0d3c3c021df569c62cfc2111018c6c40071fd89f2dd3d387b6192e928782c2ad  /tmp/omniroute-edge.enc' | sha256sum -c -
+          echo '22c3c3ff2f73599716920620eb0a12e9e5e6218416f49f7496ccf85ed0b136c6  /tmp/omniroute-edge.enc' | sha256sum -c -
           openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
             -in /tmp/omniroute-edge.enc \
             -out /tmp/omniroute-edge.zip \
