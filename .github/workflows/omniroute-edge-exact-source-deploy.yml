@@ -177,30 +177,43 @@ jobs:
         working-directory: deploy-src
         run: npm run build
 
-      - name: Cloudflare dry-run
+      - name: Cloudflare dry-run and target identity gate
         working-directory: deploy-src
-        run: npx --yes wrangler@4.36.0 deploy --dry-run
+        run: |
+          set -euo pipefail
+          config="$PWD/wrangler.toml"
+          test -f "$config"
+          npx --yes wrangler@4.36.0 deploy --dry-run --config "$config" --name omniroute-edge | tee /tmp/wrangler-dry-run.log
+          grep -Fq 'env.DB (omniroute-edge-db)' /tmp/wrangler-dry-run.log
+          grep -Fq 'env.RATE_LIMITER' /tmp/wrangler-dry-run.log
+          grep -Fq 'env.ROUTING_AUTHORITY ("omniroute")' /tmp/wrangler-dry-run.log
+          ! grep -Fq 'env.DM_DB (DM_DB)' /tmp/wrangler-dry-run.log
+          ! grep -Fq 'env.CF_AIG_GATEWAY_SLUG' /tmp/wrangler-dry-run.log
+          echo 'WRANGLER TARGET IDENTITY PASS: omniroute-edge'
 
-      - name: Deploy existing Worker
+      - name: Deploy existing OmniRoute Worker
         id: deploy
         working-directory: deploy-src
         run: |
           set -euo pipefail
-          npx --yes wrangler@4.36.0 deploy | tee /tmp/wrangler-deploy.log
+          config="$PWD/wrangler.toml"
+          npx --yes wrangler@4.36.0 deploy --config "$config" --name omniroute-edge | tee /tmp/wrangler-deploy.log
+          grep -Fq 'Uploaded omniroute-edge' /tmp/wrangler-deploy.log
           version=$(grep -Eo '(Current Version ID|Version ID): [0-9a-f-]+' /tmp/wrangler-deploy.log | tail -1 | awk '{print $NF}' || true)
           url=$(grep -Eo 'https://[A-Za-z0-9._-]+\.workers\.dev' /tmp/wrangler-deploy.log | tail -1 || true)
           test -n "$version"
+          test "$url" = 'https://omniroute-edge.amin-chinisaz-edu.workers.dev'
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Worker version: $version"
-          echo "Worker URL: ${url:-https://omniroute-edge.amin-chinisaz-edu.workers.dev}"
+          echo "Worker URL: $url"
 
       - name: Public production smoke
         env:
           WORKER_URL: ${{ steps.deploy.outputs.url }}
         run: |
           set -euo pipefail
-          if [ -z "$WORKER_URL" ]; then WORKER_URL='https://omniroute-edge.amin-chinisaz-edu.workers.dev'; fi
+          test "$WORKER_URL" = 'https://omniroute-edge.amin-chinisaz-edu.workers.dev'
 
           check_2xx_4xx() {
             path="$1"
