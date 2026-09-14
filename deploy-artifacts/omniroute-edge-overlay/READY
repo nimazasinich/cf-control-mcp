@@ -7,3 +7,4 @@ manifest_transport_sha256=db08798a4e24ac2c3199a098c5f2a353d84b74be8a1e80581e1bac
 routing_authority=omniroute
 inference_without_origin=BLOCKED_NOT_CONFIGURED
 trigger=deploy
+attempt=2
