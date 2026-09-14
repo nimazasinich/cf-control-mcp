@@ -5,7 +5,7 @@ on:
     branches:
       - deploy/omniroute-edge-ui-20260914
     paths:
-      - 'deploy-artifacts/READY'
+      - 'deploy-artifacts/omniroute-edge-exact/READY'
 
 permissions:
   contents: read
@@ -17,7 +17,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -28,29 +28,60 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Reassemble and decrypt exact source artifact
-        env:
-          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+      - name: Reassemble exact sanitized source
         run: |
           set -euo pipefail
-          test -n "$MCP_AUTH_TOKEN"
-          cat deploy-artifacts/chunks/part* | base64 -d > /tmp/omniroute-edge.enc
-          echo '22c3c3ff2f73599716920620eb0a12e9e5e6218416f49f7496ccf85ed0b136c6  /tmp/omniroute-edge.enc' | sha256sum -c -
-          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
-            -in /tmp/omniroute-edge.enc \
-            -out /tmp/omniroute-edge.zip \
-            -pass env:MCP_AUTH_TOKEN
-          echo '30c179f132d094fd951c34a0acd86e466328b07388e08e1ae56f864ebec5040e  /tmp/omniroute-edge.zip' | sha256sum -c -
+          cat deploy-artifacts/omniroute-edge-exact/part-*.b64 | base64 -d > /tmp/omniroute-edge.zip
+          echo 'b8f600d79ecbd55507f14568e4dced1dd55b2499ceb74bbee7c5af94c0d8eb7f  /tmp/omniroute-edge.zip' | sha256sum -c -
           rm -rf deploy-src
           mkdir deploy-src
           unzip -q /tmp/omniroute-edge.zip -d deploy-src
-          rm -f /tmp/omniroute-edge.enc /tmp/omniroute-edge.zip
+          test "$(find deploy-src -type f | wc -l | tr -d ' ')" = '156'
+          mkdir -p deploy-src/public
+          cp secure-ai-router/public/dashboard-hub.png deploy-src/public/dashboard-hub.png
+          echo 'd17e323b86e1e6fddd5080fca6f5da5932067a49c8dd0f7a7d218daed928ecdd  deploy-src/public/dashboard-hub.png' | sha256sum -c -
+          test "$(find deploy-src -type f | wc -l | tr -d ' ')" = '157'
+          test -f deploy-src/package.json
+          test -f deploy-src/package-lock.json
+          test -f deploy-src/src/worker.ts
+          test -f deploy-src/src/edge/gatewayCore.ts
+          test -f deploy-src/src/server/browserAuth.ts
+          test -f deploy-src/public/dashboard-hub.png
+          test -f deploy-src/VERIFY-AND-BUILD.cmd
+          rm -f /tmp/omniroute-edge.zip
+
+      - name: Sanitized bundle safety gate
+        working-directory: deploy-src
+        run: |
+          set -euo pipefail
+          test ! -e .env
+          test ! -d .wrangler
+          test ! -d node_modules
+          test ! -d dist
+          test ! -e sqlite.db
+          test ! -e OmniRoute-provider-reference.sqlite.db
+          test ! -e data/providers-and-keys.json
+          test ! -e scratch_omniroute_raw.json
+          if find . -type f \( -name '*.db' -o -name '*.sqlite' -o -name '*.sqlite3' -o -name '*.db-wal' -o -name '*.db-shm' \) | grep -q .; then
+            echo 'Forbidden database/runtime artifact found in deployment source.' >&2
+            exit 1
+          fi
+          if grep -RIEq --exclude='package-lock.json' '(cfut_[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|vck_[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{20,})' .; then
+            echo 'Potential secret material found in deployment source.' >&2
+            exit 1
+          fi
+          grep -q '^name = "omniroute-edge"' wrangler.toml
+          grep -q 'database_name = "omniroute-edge-db"' wrangler.toml
+          grep -q 'ROUTING_AUTHORITY = "omniroute"' wrangler.toml
+          ! grep -q '^\[\[vpc_services\]\]' wrangler.toml
+          ! grep -q 'routeRequest(' src/worker.ts
+          echo 'SANITIZED BUNDLE SAFETY PASS'
 
       - name: Install dependencies
         working-directory: deploy-src
         run: npm ci --no-audit --no-fund
 
-      - name: Lint / typecheck
+      - name: TypeScript
         working-directory: deploy-src
         run: npm run lint
 
@@ -58,9 +89,15 @@ jobs:
         working-directory: deploy-src
         run: npm test
 
-      - name: Node contract tests
+      - name: Cloud-deploy Node contracts
         working-directory: deploy-src
-        run: npm run test:node
+        run: |
+          set -euo pipefail
+          mapfile -t tests < <(find test-node -maxdepth 1 -name '*.test.mjs' \
+            ! -name 'local-data-credential-placement.test.mjs' \
+            ! -name 'pc-package-safety.test.mjs' | sort)
+          echo "Running ${#tests[@]} Cloud-deploy Node contract files."
+          node --experimental-strip-types --test "${tests[@]}"
 
       - name: Verify deployment config
         working-directory: deploy-src
@@ -80,25 +117,44 @@ jobs:
         run: |
           set -euo pipefail
           npx --yes wrangler@4.36.0 deploy | tee /tmp/wrangler-deploy.log
-          version=$(grep -Eo 'Current Version ID: [0-9a-f-]+' /tmp/wrangler-deploy.log | tail -1 | awk '{print $4}' || true)
+          version=$(grep -Eo '(Current Version ID|Version ID): [0-9a-f-]+' /tmp/wrangler-deploy.log | tail -1 | awk '{print $NF}' || true)
           url=$(grep -Eo 'https://[A-Za-z0-9._-]+\.workers\.dev' /tmp/wrangler-deploy.log | tail -1 || true)
+          test -n "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "url=$url" >> "$GITHUB_OUTPUT"
-          echo "Worker version: ${version:-unknown}"
-          echo "Worker URL: ${url:-unknown}"
+          echo "Worker version: $version"
+          echo "Worker URL: ${url:-https://omniroute-edge.amin-chinisaz-edu.workers.dev}"
 
-      - name: Public runtime smoke
+      - name: Public production smoke
         env:
           WORKER_URL: ${{ steps.deploy.outputs.url }}
         run: |
           set -euo pipefail
           if [ -z "$WORKER_URL" ]; then WORKER_URL='https://omniroute-edge.amin-chinisaz-edu.workers.dev'; fi
-          for path in / /signin /api/health /api/auth/status; do
+
+          check_2xx_4xx() {
+            path="$1"
             code=$(curl -sS -L -o /tmp/body -w '%{http_code}' "$WORKER_URL$path")
             echo "$path HTTP $code"
             test "$code" -ge 200
             test "$code" -lt 500
-          done
-          code=$(curl -sS -o /tmp/body -w '%{http_code}' "$WORKER_URL/v1/models")
-          echo "/v1/models unauthenticated HTTP $code"
-          test "$code" = '401'
+          }
+
+          check_exact() {
+            path="$1" expected="$2"
+            code=$(curl -sS -o /tmp/body -w '%{http_code}' "$WORKER_URL$path")
+            echo "$path HTTP $code"
+            test "$code" = "$expected"
+          }
+
+          check_2xx_4xx /
+          check_2xx_4xx /signin
+          check_2xx_4xx /dashboard-hub.png
+          check_2xx_4xx /api/health
+          check_2xx_4xx /api/auth/status
+          check_exact /api/auth/session 401
+          check_exact /api/v2/system/status 401
+          check_exact /v1/models 401
+
+          echo 'CONTROL PLANE PUBLIC SMOKE PASS'
+          echo 'Inference classification: BLOCKED / NOT CONFIGURED unless OMNIROUTE_ORIGIN is configured by verified HTTPS.'
