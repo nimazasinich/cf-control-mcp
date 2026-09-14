@@ -1,0 +1,104 @@
+name: OmniRoute Edge exact-source deploy
+
+on:
+  push:
+    branches:
+      - deploy/omniroute-edge-ui-20260914
+    paths:
+      - 'deploy-artifacts/READY'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: omniroute-edge-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Reassemble and decrypt exact source artifact
+        env:
+          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$MCP_AUTH_TOKEN"
+          cat deploy-artifacts/chunks/part* | base64 -d > /tmp/omniroute-edge.enc
+          echo '0d3c3c021df569c62cfc2111018c6c40071fd89f2dd3d387b6192e928782c2ad  /tmp/omniroute-edge.enc' | sha256sum -c -
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+            -in /tmp/omniroute-edge.enc \
+            -out /tmp/omniroute-edge.zip \
+            -pass env:MCP_AUTH_TOKEN
+          echo '30c179f132d094fd951c34a0acd86e466328b07388e08e1ae56f864ebec5040e  /tmp/omniroute-edge.zip' | sha256sum -c -
+          rm -rf deploy-src
+          mkdir deploy-src
+          unzip -q /tmp/omniroute-edge.zip -d deploy-src
+          rm -f /tmp/omniroute-edge.enc /tmp/omniroute-edge.zip
+
+      - name: Install dependencies
+        working-directory: deploy-src
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint / typecheck
+        working-directory: deploy-src
+        run: npm run lint
+
+      - name: Vitest
+        working-directory: deploy-src
+        run: npm test
+
+      - name: Node contract tests
+        working-directory: deploy-src
+        run: npm run test:node
+
+      - name: Verify deployment config
+        working-directory: deploy-src
+        run: npm run verify:deploy-config
+
+      - name: Build
+        working-directory: deploy-src
+        run: npm run build
+
+      - name: Cloudflare dry-run
+        working-directory: deploy-src
+        run: npx --yes wrangler@4.36.0 deploy --dry-run
+
+      - name: Deploy existing Worker
+        id: deploy
+        working-directory: deploy-src
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.36.0 deploy | tee /tmp/wrangler-deploy.log
+          version=$(grep -Eo 'Current Version ID: [0-9a-f-]+' /tmp/wrangler-deploy.log | tail -1 | awk '{print $4}' || true)
+          url=$(grep -Eo 'https://[A-Za-z0-9._-]+\.workers\.dev' /tmp/wrangler-deploy.log | tail -1 || true)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Worker version: ${version:-unknown}"
+          echo "Worker URL: ${url:-unknown}"
+
+      - name: Public runtime smoke
+        env:
+          WORKER_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          set -euo pipefail
+          if [ -z "$WORKER_URL" ]; then WORKER_URL='https://omniroute-edge.amin-chinisaz-edu.workers.dev'; fi
+          for path in / /signin /api/health /api/auth/status; do
+            code=$(curl -sS -L -o /tmp/body -w '%{http_code}' "$WORKER_URL$path")
+            echo "$path HTTP $code"
+            test "$code" -ge 200
+            test "$code" -lt 500
+          done
+          code=$(curl -sS -o /tmp/body -w '%{http_code}' "$WORKER_URL/v1/models")
+          echo "/v1/models unauthenticated HTTP $code"
+          test "$code" = '401'
