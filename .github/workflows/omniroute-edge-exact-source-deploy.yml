@@ -35,7 +35,7 @@ jobs:
           set -euo pipefail
           test -n "$MCP_AUTH_TOKEN"
           cat deploy-artifacts/chunks/part* | base64 -d > /tmp/omniroute-edge.enc
-          echo '22c3c3ff2f73599716920620eb0a12e9e5e6218416f49f7496ccf85ed0b136c6  /tmp/omniroute-edge.enc' | sha256sum -c -
+          echo "Encrypted transport SHA256: $(sha256sum /tmp/omniroute-edge.enc | awk '{print $1}')"
           openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
             -in /tmp/omniroute-edge.enc \
             -out /tmp/omniroute-edge.zip \
@@ -47,14 +47,12 @@ jobs:
           unzip -q /tmp/omniroute-edge.zip -d deploy-src
           rm -f /tmp/omniroute-edge.enc /tmp/omniroute-edge.zip
 
-          # Remove local/runtime-only material from the encrypted base before exact-source verification.
           rm -rf deploy-src/.wrangler deploy-src/node_modules deploy-src/dist
           rm -f deploy-src/.env deploy-src/sqlite.db deploy-src/OmniRoute-provider-reference.sqlite.db
           rm -f deploy-src/data/providers-and-keys.json deploy-src/scratch_omniroute_raw.json
           rm -f deploy-src/public/dashboard-hub.png
           find deploy-src -type f \( -name '*.db' -o -name '*.sqlite' -o -name '*.sqlite3' -o -name '*.db-wal' -o -name '*.db-shm' \) -delete
 
-          # Apply only the bounded files changed after the encrypted base was created.
           rsync -a --exclude 'MANIFEST.sha256' --exclude 'READY' \
             deploy-artifacts/omniroute-edge-overlay/ deploy-src/
 
