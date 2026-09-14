@@ -1,0 +1,45 @@
+name: OmniRoute Edge public auth probe
+
+on:
+  push:
+    branches:
+      - deploy/omniroute-edge-ui-20260914
+    paths:
+      - 'deploy-artifacts/omniroute-edge-probe/TRIGGER'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe deployed OmniRoute public auth contract
+        run: |
+          set -euo pipefail
+          base='https://omniroute-edge.amin-chinisaz-edu.workers.dev'
+          nonce="$(date +%s%N)"
+          probe() {
+            path="$1"
+            label="$2"
+            echo "=== $label $path ==="
+            curl -sS \
+              -H 'Cache-Control: no-cache, no-store, max-age=0' \
+              -H 'Pragma: no-cache' \
+              -H 'Cookie:' \
+              -D "/tmp/${label}.headers" \
+              -o "/tmp/${label}.body" \
+              -w 'HTTP %{http_code}\n' \
+              "$base$path?probe=$nonce"
+            echo '-- headers --'
+            grep -Ei '^(HTTP/|content-type:|cache-control:|cf-cache-status:|set-cookie:|server:)' "/tmp/${label}.headers" || true
+            echo '-- body --'
+            cat "/tmp/${label}.body"
+            echo
+          }
+          probe '/api/health' health
+          probe '/api/auth/status' auth_status
+          probe '/api/auth/session' auth_session
+          probe '/api/v2/system/status' system_status
+          probe '/v1/models' v1_models
