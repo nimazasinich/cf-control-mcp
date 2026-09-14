@@ -28,42 +28,92 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Reassemble encrypted base and verify exact current source
-        env:
-          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+      - name: Reassemble exact current source and verify SHA256
         run: |
           set -euo pipefail
-          test -n "$MCP_AUTH_TOKEN"
-          cat deploy-artifacts/chunks/part* | base64 -d > /tmp/omniroute-edge.enc
-          echo "Encrypted transport SHA256: $(sha256sum /tmp/omniroute-edge.enc | awk '{print $1}')"
-          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
-            -in /tmp/omniroute-edge.enc \
-            -out /tmp/omniroute-edge.zip \
-            -pass env:MCP_AUTH_TOKEN
-          echo '30c179f132d094fd951c34a0acd86e466328b07388e08e1ae56f864ebec5040e  /tmp/omniroute-edge.zip' | sha256sum -c -
+          python - <<'PY'
+          from pathlib import Path
+          import base64
+          import hashlib
+
+          root = Path('deploy-artifacts/omniroute-edge-exact-xz')
+          parts = [(root / f'part-{i:03d}.b64').read_text(encoding='ascii') for i in range(16)]
+
+          def git_blob_sha(text: str) -> str:
+              data = text.encode('ascii')
+              return hashlib.sha1(f'blob {len(data)}\0'.encode('ascii') + data).hexdigest()
+
+          # GitHub connector transport defects were independently reproduced from the
+          # canonical local chunks. Fail closed if the observed transport changes.
+          observed_transport = {
+              4: (17999, 'c0ebe938a9e3462cff6db2bdddc238146a900be6'),
+              6: (17999, '9dc231247a2b7103fbbf566d62017086019d09c2'),
+              10: (18000, '1b5e2ec750dcbee041a539d7fc7415c197935276'),
+          }
+          for index, (size, sha) in observed_transport.items():
+              actual_size = len(parts[index].encode('ascii'))
+              actual_sha = git_blob_sha(parts[index])
+              if (actual_size, actual_sha) != (size, sha):
+                  raise SystemExit(
+                      f'Unexpected transport state for part-{index:03d}: '
+                      f'size={actual_size} sha={actual_sha}'
+                  )
+
+          # Deterministic inverse repairs for the three known connector transcription defects.
+          parts[4] = parts[4] + 'L'
+          parts[6] = parts[6][:12364] + 'C' + parts[6][12364:]
+          if parts[10][6686] != 't':
+              raise SystemExit('Unexpected part-010 transport byte at offset 6686')
+          parts[10] = parts[10][:6686] + 'T' + parts[10][6687:]
+
+          expected_git_blobs = [
+              '31fd024af90e5241204518f67a84ed8435ea7316',
+              '9d31f4283f537248a9164a8194dd5be07b30e9e1',
+              'db67f068f9dfab23db369081a0f9e3490cc99ea9',
+              '6d50bfa6e3ef37e46f5ee3a89ee1cc1ac76dc2d7',
+              '3ce5d69589186dbaabf8075a7b36ac0a4c9f001b',
+              '13284865b496eb04bc27eb6fb942f9d26271701e',
+              '4a6db81d7f12460b05cfce2aa46fe9fcb08a83e4',
+              '29b7e7f24bef29d2c09ae3e59d6cc383b45ef4ec',
+              'a9f4d58469bcf085fe51b119c2ea950e3d3bae0d',
+              '65f787200b2a52a8308f0cb0c0801e39cd5c70e7',
+              'd27b3d86a48e7c354d567b4c649936c12974421c',
+              'e607dddb7653723fd89e816ffc994a8d7c0043cb',
+              '12c0ecf66b8fb254fa8a2c6ef2e8dec1f886bda9',
+              '688f0115965a3f76b74460855165da43f395277f',
+              '9b33ea590e070b6842a5ed6772978dbf2433f450',
+              '9b38b3d4cf855367ac44741e7609f80af5536a81',
+          ]
+          for index, expected in enumerate(expected_git_blobs):
+              actual = git_blob_sha(parts[index])
+              if actual != expected:
+                  raise SystemExit(
+                      f'Exact chunk verification failed for part-{index:03d}: '
+                      f'expected={expected} actual={actual}'
+                  )
+
+          payload = ''.join(parts)
+          if len(payload) != 276440:
+              raise SystemExit(f'Unexpected base64 payload length: {len(payload)}')
+          archive = base64.b64decode(payload, validate=True)
+          if len(archive) != 207328:
+              raise SystemExit(f'Unexpected archive size: {len(archive)}')
+          archive_sha = hashlib.sha256(archive).hexdigest()
+          expected_archive_sha = 'db08798a4e24ac2c3199a098c5f2a353d84b74be8a1e80581e1bac81a234274d'
+          if archive_sha != expected_archive_sha:
+              raise SystemExit(
+                  f'Exact archive SHA256 mismatch: expected={expected_archive_sha} actual={archive_sha}'
+              )
+          Path('/tmp/omniroute-edge.tar.xz').write_bytes(archive)
+          print(f'Exact transport SHA256: {archive_sha}')
+          PY
 
           rm -rf deploy-src
           mkdir deploy-src
-          unzip -q /tmp/omniroute-edge.zip -d deploy-src
-          rm -f /tmp/omniroute-edge.enc /tmp/omniroute-edge.zip
+          tar -xJf /tmp/omniroute-edge.tar.xz -C deploy-src
+          rm -f /tmp/omniroute-edge.tar.xz
 
-          rm -rf deploy-src/.wrangler deploy-src/node_modules deploy-src/dist
-          rm -f deploy-src/.env deploy-src/sqlite.db deploy-src/OmniRoute-provider-reference.sqlite.db
-          rm -f deploy-src/data/providers-and-keys.json deploy-src/scratch_omniroute_raw.json
-          rm -f deploy-src/public/dashboard-hub.png
-          find deploy-src -type f \( -name '*.db' -o -name '*.sqlite' -o -name '*.sqlite3' -o -name '*.db-wal' -o -name '*.db-shm' \) -delete
-
-          rsync -a --exclude 'MANIFEST.sha256' --exclude 'READY' \
-            deploy-artifacts/omniroute-edge-overlay/ deploy-src/
-
-          cd deploy-src
-          sha256sum -c ../deploy-artifacts/omniroute-edge-overlay/MANIFEST.sha256
-          find . -type f -printf '%P\n' | LC_ALL=C sort > /tmp/actual-files.txt
-          sed -E 's/^[0-9a-f]{64}  //' ../deploy-artifacts/omniroute-edge-overlay/MANIFEST.sha256 | LC_ALL=C sort > /tmp/expected-files.txt
-          diff -u /tmp/expected-files.txt /tmp/actual-files.txt
-          test "$(wc -l < /tmp/actual-files.txt | tr -d ' ')" = '156'
-          cd ..
-
+          test "$(find deploy-src -type f | wc -l | tr -d ' ')" = '156'
           mkdir -p deploy-src/public
           cp secure-ai-router/public/dashboard-hub.png deploy-src/public/dashboard-hub.png
           echo 'd17e323b86e1e6fddd5080fca6f5da5932067a49c8dd0f7a7d218daed928ecdd  deploy-src/public/dashboard-hub.png' | sha256sum -c -
