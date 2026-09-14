@@ -1,10 +1,10 @@
 target=omniroute-edge
 mode=production-control-plane
-source_manifest=MANIFEST.sha256
+source_transport=deploy-artifacts/omniroute-edge-exact-xz/part-000..015.b64
 source_files_before_dashboard=156
 source_files_after_dashboard=157
-manifest_transport_sha256=db08798a4e24ac2c3199a098c5f2a353d84b74be8a1e80581e1bac81a234274d
+source_archive_sha256=db08798a4e24ac2c3199a098c5f2a353d84b74be8a1e80581e1bac81a234274d
 routing_authority=omniroute
 inference_without_origin=BLOCKED_NOT_CONFIGURED
 trigger=deploy
-attempt=2
+attempt=3
