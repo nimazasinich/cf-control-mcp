@@ -1,0 +1,122 @@
++            <button disabled={isSubmitting} type="submit" className="flex h-[50px] w-full items-center justify-center gap-2 rounded-xl bg-[linear-gradient(90deg,#1668e3,#0e9fd0_55%,#16a879)] text-[12px] font-black text-white shadow-[0_12px_28px_rgba(14,159,208,.22)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-55">
++              {isSubmitting ? 'Verifying credentials…' : 'Sign in to dashboard'} <ArrowRight size={17}/>
++            </button>
++          </form>
+ 
+-    {bootstrapOpen ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#061B38]/25 p-5 backdrop-blur-sm" role="dialog" aria-modal="true"><form onSubmit={handleBootstrap} className="w-full max-w-[450px] rounded-2xl border border-white bg-white p-6 shadow-2xl"><div className="flex items-start justify-between"><div><h3 className="text-[20px] font-extrabold text-[#0B1851]">Initialize administrator</h3><p className="mt-1 text-[11px] text-slate-500">This is available only while no browser administrator exists.</p></div><button type="button" onClick={() => setBootstrapOpen(false)}><X size={18}/></button></div><div className="mt-5 grid gap-3"><input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Display name" className="h-10 rounded-lg border border-slate-200 px-3 text-[12px] outline-none"/><input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="Admin email" className="h-10 rounded-lg border border-slate-200 px-3 text-[12px] outline-none" required/><input value={password} onChange={(e) => setPassword(e.target.value)} type="password" autoComplete="new-password" placeholder="Strong password (12+ characters)" className="h-10 rounded-lg border border-slate-200 px-3 text-[12px] outline-none" required/><input value={bootstrapSecret} onChange={(e) => setBootstrapSecret(e.target.value)} type="password" placeholder="BOOTSTRAP_SECRET" className="h-10 rounded-lg border border-slate-200 px-3 text-[12px] outline-none" required/></div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setBootstrapOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-[11px]">Cancel</button><button disabled={isSubmitting} className="rounded-lg bg-[#1269D9] px-4 py-2 text-[11px] font-bold text-white">{isSubmitting ? 'Creating…' : 'Create administrator'}</button></div></form></div> : null}
+-  </div>;
++          {configuredProviders.length ? <>
++            <div className="my-5 flex items-center gap-3 text-[9px] font-bold uppercase tracking-[.14em] text-slate-300 before:h-px before:flex-1 before:bg-slate-100 after:h-px after:flex-1 after:bg-slate-100">or continue with</div>
++            <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${configuredProviders.length}, minmax(0,1fr))` }}>
++              {configuredProviders.map((provider) => <button key={provider} type="button" onClick={() => startOAuth(provider)} className="flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white text-[10px] font-bold text-slate-600 hover:bg-slate-50"><ProviderLogo provider={provider}/>{providerLabels[provider]}</button>)}
++            </div>
++          </> : null}
++
++          <div className="mt-6 flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-[9px] font-semibold leading-4 text-slate-500">
++            <KeyRound size={15} className="shrink-0 text-emerald-600"/>
++            Browser admin credentials create a server-side session; they are not gateway API keys.
++          </div>
++        </section>
++      </main>
++
++      {bootstrapOpen ? <div className="fixed inset-0 z-50 grid place-items-center bg-[#071327]/50 p-5 backdrop-blur-sm" role="dialog" aria-modal="true">
++        <form onSubmit={handleBootstrap} className="w-full max-w-[500px] rounded-[24px] border border-white bg-white p-6 shadow-2xl">
++          <div className="flex items-start justify-between gap-4">
++            <div><div className="mb-3"><ProductMark compact/></div><h3 className="text-[22px] font-black tracking-[-.035em] text-slate-950">Initialize administrator</h3><p className="mt-1 text-[10.5px] leading-5 text-slate-500">Create the first D1-backed browser administrator. This flow closes after the first admin exists.</p></div>
++            <button type="button" onClick={() => setBootstrapOpen(false)} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500"><X size={16}/></button>
++          </div>
++          <div className="mt-5 grid grid-cols-2 gap-3">
++            <label className="col-span-2"><span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.1em] text-slate-500">Display name</span><input value={bootstrapDisplayName} onChange={(e) => setBootstrapDisplayName(e.target.value)} placeholder="Administrator" className="h-11 w-full rounded-xl border border-slate-200 px-3 text-[12px] font-semibold outline-none focus:border-blue-400"/></label>
++            <label><span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.1em] text-slate-500">Admin username</span><input value={bootstrapUsername} onChange={(e) => setBootstrapUsername(e.target.value.toLowerCase())} placeholder="admin" autoComplete="username" className="h-11 w-full rounded-xl border border-slate-200 px-3 text-[12px] font-semibold outline-none focus:border-blue-400" required/></label>
++            <label><span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.1em] text-slate-500">Admin email</span><input value={bootstrapEmail} onChange={(e) => setBootstrapEmail(e.target.value)} type="email" placeholder="admin@example.com" autoComplete="email" className="h-11 w-full rounded-xl border border-slate-200 px-3 text-[12px] font-semibold outline-none focus:border-blue-400" required/></label>
++            <label className="col-span-2"><span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.1em] text-slate-500">Administrator password</span><input value={bootstrapPassword} onChange={(e) => setBootstrapPassword(e.target.value)} type="password" autoComplete="new-password" placeholder="Strong password · 12+ characters" className="h-11 w-full rounded-xl border border-slate-200 px-3 text-[12px] font-semibold outline-none focus:border-blue-400" required/></label>
++            <label className="col-span-2"><span className="mb-1.5 block text-[9px] font-black uppercase tracking-[.1em] text-slate-500">BOOTSTRAP_SECRET</span><input value={bootstrapSecret} onChange={(e) => setBootstrapSecret(e.target.value)} type="password" placeholder="Paste the configured one-time bootstrap secret" className="h-11 w-full rounded-xl border border-slate-200 px-3 text-[12px] font-semibold outline-none focus:border-blue-400" required/></label>
++          </div>
++          <div className="mt-5 flex items-center justify-between rounded-xl bg-blue-50 px-3 py-2.5 text-[9.5px] font-semibold text-blue-800"><span className="flex items-center gap-2"><Check size={14}/> Username and email will both remain valid sign-in identifiers.</span></div>
++          <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setBootstrapOpen(false)} className="rounded-xl border border-slate-200 px-4 py-2.5 text-[10px] font-bold text-slate-600">Cancel</button><button disabled={isSubmitting} className="rounded-xl bg-slate-950 px-5 py-2.5 text-[10px] font-black text-white disabled:opacity-50">{isSubmitting ? 'Creating administrator…' : 'Create administrator'}</button></div>
++        </form>
++      </div> : null}
++    </div>
++  );
+ };
+diff --git a/src/components/DreamWorkerLoadingScreen.tsx b/src/components/DreamWorkerLoadingScreen.tsx
+index 75201b1..b8a35bc 100644
+--- a/src/components/DreamWorkerLoadingScreen.tsx
++++ b/src/components/DreamWorkerLoadingScreen.tsx
+@@ -1,17 +1,18 @@
+-import React, { useCallback, useEffect, useState } from 'react';
++import React, { useCallback, useEffect, useMemo, useState } from 'react';
+ import { useNavigate } from 'react-router-dom';
+-import { Check, Loader2, RotateCcw, ShieldCheck } from 'lucide-react';
++import { Check, Cloud, Loader2, RotateCcw, ShieldCheck } from 'lucide-react';
+ import { checkPermissions, checkSession, loadWorkspace } from '../auth/browserSession';
+ import { useAuth } from '../auth/AuthProvider';
+ 
+ type PhaseState = 'pending' | 'active' | 'complete' | 'error';
+-type Phase = { id: number; label: string; detail: string; };
++type Phase = { id: number; label: string; activeDetail: string; completeDetail: string; };
+ 
++const MIN_LOADING_MS = 1450;
+ const phases: Phase[] = [
+-  { id: 1, label: 'Authenticating', detail: 'Validating server session' },
+-  { id: 2, label: 'Loading workspace', detail: 'Reading live control APIs' },
+-  { id: 3, label: 'Checking permissions', detail: 'Reading permission contract' },
+-  { id: 4, label: 'Almost there…', detail: 'Opening dashboard' },
++  { id: 1, label: 'Session', activeDetail: 'Validating server session…', completeDetail: 'Session verified' },
++  { id: 2, label: 'Control plane', activeDetail: 'Reading live system APIs…', completeDetail: 'Control APIs ready' },
++  { id: 3, label: 'Permissions', activeDetail: 'Reading permission contract…', completeDetail: 'Permissions verified' },
++  { id: 4, label: 'Dashboard', activeDetail: 'Preparing your workspace…', completeDetail: 'Dashboard ready' },
+ ];
+ 
+ const pause = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+@@ -25,6 +26,7 @@ export const DreamWorkerLoadingScreen: React.FC = () => {
+   const [runId, setRunId] = useState(0);
+ 
+   const run = useCallback(async (cancelled: () => boolean) => {
++    const startedAt = performance.now();
+     let activeStep = 1;
+     setError(null);
+     setFailedStep(null);
+@@ -34,23 +36,21 @@ export const DreamWorkerLoadingScreen: React.FC = () => {
+       if (!session) { navigate('/signin', { replace: true }); return; }
+       await refreshSession();
+       if (cancelled()) return;
+-      await pause(180);
+ 
+       activeStep = 2;
+       setCurrentStep(2);
+       await loadWorkspace();
+       if (cancelled()) return;
+-      await pause(180);
+ 
+       activeStep = 3;
+       setCurrentStep(3);
+       await checkPermissions();
+       if (cancelled()) return;
+-      await pause(220);
+ 
+       activeStep = 4;
+       setCurrentStep(4);
+-      await pause(300);
++      const remaining = Math.max(0, MIN_LOADING_MS - (performance.now() - startedAt));
++      if (remaining > 0) await pause(remaining);
+       if (!cancelled()) navigate('/', { replace: true });
+     } catch (cause) {
+       if (cancelled()) return;
+@@ -72,82 +72,65 @@ export const DreamWorkerLoadingScreen: React.FC = () => {
+     return 'pending';
+   };
+ 
++  const completedCount = useMemo(() => phases.filter((phase) => stateFor(phase.id) === 'complete').length, [currentStep, failedStep]);
++  const progress = error ? Math.max(8, ((currentStep - 1) / phases.length) * 100) : Math.max(8, ((completedCount + .45) / phases.length) * 100);
++
+   const backToSignIn = async () => {
+     try { await logout(); } catch { /* session may already be invalid */ }
+     navigate('/signin', { replace: true });
+   };
+ 
+   return (
+-    <div className="relative w-full h-screen min-h-[753px] max-h-[753px] overflow-hidden bg-[radial-gradient(circle_at_50%_16%,rgba(224,242,254,.8),transparent_30%),linear-gradient(180deg,#fbfdff_0%,#f1f8ff_62%,#ecf8fb_100%)] flex flex-col items-center justify-center select-none">
+-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_28%,rgba(186,230,253,.24),transparent_22%),radial-gradient(circle_at_83%_42%,rgba(153,246,228,.21),transparent_25%)]" />
+-      <div className="relative z-10 flex flex-col items-center text-center -translate-y-4">
+-        <img src="/dreamworker-logo.webp" alt="DreamWorker" className="w-[96px] h-[72px] object-contain drop-shadow-[0_14px_26px_rgba(14,165,233,.22)]" />
