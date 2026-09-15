@@ -1,0 +1,105 @@
+-        <h1 className="text-[28px] font-black tracking-[-0.045em] text-[#07153a] leading-none">DreamWorker</h1>
+-        <p className="text-[13px] font-semibold text-[#6679ad] mt-1.5">MCP Control Plane</p>
+-
+-        <div className="relative w-[146px] h-[146px] mt-8 mb-5 flex items-center justify-center">
+-          <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle,rgba(56,189,248,.18),transparent_64%)] blur-xl" />
+-          <div className="absolute inset-[5px] rounded-full bg-[conic-gradient(from_25deg,#2dd4bf_0deg,#38bdf8_125deg,#2563eb_230deg,rgba(255,255,255,.24)_310deg,#2dd4bf_360deg)] animate-spin [animation-duration:1.65s] shadow-[0_0_36px_rgba(56,189,248,.26)]" />
+-          <div className="absolute inset-[13px] rounded-full bg-[#f8fcff] shadow-[inset_0_0_24px_rgba(125,211,252,.18)]" />
+-          <div className="relative w-[88px] h-[88px] rounded-full bg-white border border-[#e0edf8] flex items-center justify-center shadow-[0_10px_30px_rgba(56,130,180,.10)]">
+-            {error ? <RotateCcw size={28} className="text-rose-500" /> : <Loader2 size={30} className="text-[#139fdc] animate-spin" />}
++    <div className="relative min-h-screen overflow-hidden bg-[#f4f8fc] text-slate-950">
++      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_27%,rgba(59,130,246,.14),transparent_26%),radial-gradient(circle_at_78%_38%,rgba(45,212,191,.10),transparent_24%),linear-gradient(180deg,#fbfdff_0%,#f1f7fc_100%)]" />
++      <div className="pointer-events-none absolute left-1/2 top-[42%] h-[470px] w-[470px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-blue-100/70" />
++      <div className="pointer-events-none absolute left-1/2 top-[42%] h-[340px] w-[340px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-cyan-100/80" />
++
++      <div className="relative z-10 flex min-h-screen items-center justify-center px-6 py-10">
++        <section className="w-full max-w-[760px] rounded-[30px] border border-white bg-white/90 p-8 shadow-[0_32px_90px_rgba(30,78,140,.13)] backdrop-blur-xl">
++          <div className="flex items-center justify-between gap-4">
++            <div className="flex items-center gap-3">
++              <div className="relative grid h-12 w-12 place-items-center rounded-2xl bg-[linear-gradient(145deg,#0f6fff,#16b8d9_58%,#28c995)] text-white shadow-[0_14px_30px_rgba(15,111,255,.22)]"><Cloud size={25}/><span className="absolute -bottom-1 -right-1 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-400"/></div>
++              <div><div className="text-[20px] font-black tracking-[-.035em]">Cloudflare AI Router</div><div className="mt-0.5 text-[10px] font-bold uppercase tracking-[.18em] text-slate-400">Secure control-plane handoff</div></div>
++            </div>
++            <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[9px] font-black uppercase tracking-[.13em] text-slate-500">Production</div>
+           </div>
+-        </div>
+ 
+-        <h2 className="text-[30px] font-black text-[#07153a] tracking-[-0.045em] leading-none">{error ? 'Connection paused' : 'Signing you in…'}</h2>
+-        <p className="text-[13px] text-[#697fb1] font-semibold mt-2">{error ? 'A verified control-plane check did not complete.' : 'Connecting to your environment'}</p>
++          <div className="mt-10 grid grid-cols-[170px_1fr] items-center gap-8">
++            <div className="relative mx-auto grid h-[158px] w-[158px] place-items-center">
++              <div className="absolute inset-0 rounded-full bg-[conic-gradient(from_25deg,#1d6ef0_0deg,#1cc0d4_120deg,#24ba8a_235deg,rgba(255,255,255,.2)_320deg,#1d6ef0_360deg)] animate-spin [animation-duration:1.8s] shadow-[0_0_50px_rgba(37,153,210,.18)]" />
++              <div className="absolute inset-[8px] rounded-full bg-white" />
++              <div className="absolute inset-[20px] rounded-full bg-[radial-gradient(circle,#f8fbff,#eef6fc)] shadow-inner" />
++              <div className="relative grid h-[82px] w-[82px] place-items-center rounded-[24px] border border-blue-100 bg-white shadow-[0_18px_42px_rgba(30,95,160,.12)]">
++                {error ? <RotateCcw size={30} className="text-rose-500"/> : <Loader2 size={31} className="animate-spin text-[#168cc8]"/>}
++              </div>
++            </div>
++
++            <div>
++              <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-[9px] font-black uppercase tracking-[.12em] text-emerald-700"><ShieldCheck size={13}/>{error ? 'Verification paused' : 'Verifying real runtime state'}</div>
++              <h1 className="mt-4 text-[35px] font-black leading-none tracking-[-.045em] text-slate-950">{error ? 'Connection needs attention' : 'Opening your dashboard'}</h1>
++              <p className="mt-3 max-w-[450px] text-[12px] font-medium leading-5 text-slate-500">{error ? 'A real control-plane check failed. Nothing is marked ready until that check succeeds.' : 'Your session, live control APIs, and permissions are being verified before the dashboard is unlocked.'}</p>
+ 
+-        <div className="w-[620px] mt-9 relative">
+-          <div className="absolute top-[12px] left-[61px] right-[61px] h-[2px] bg-[#d9e6f3]">
+-            <div className="h-full bg-gradient-to-r from-[#20c997] via-[#25b7dc] to-[#4b84ef] transition-[width] duration-500" style={{ width: `${Math.max(0, ((currentStep - 1) / 3) * 100)}%` }} />
++              <div className="mt-6 h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full transition-[width] duration-500 ${error ? 'bg-rose-400' : 'bg-[linear-gradient(90deg,#1769e0,#11add1,#1eb782)]'}`} style={{ width: `${progress}%` }}/></div>
++            </div>
+           </div>
+-          <div className="grid grid-cols-4 gap-5 relative z-10">
++
++          <div className="mt-9 grid grid-cols-4 gap-3">
+             {phases.map((phase) => {
+-              const phaseState = stateFor(phase.id);
+-              const complete = phaseState === 'complete';
+-              const active = phaseState === 'active';
+-              const failed = phaseState === 'error';
+-              return <div key={phase.id} className="flex flex-col items-center min-w-0">
+-                <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center bg-white transition-all duration-300 ${failed ? 'border-rose-400 text-rose-500 ring-4 ring-rose-100' : complete ? 'border-[#17b88d] bg-[#17b88d] text-white shadow-[0_0_0_5px_rgba(23,184,141,.10)]' : active ? 'border-[#22b8cf] text-[#1598bd] ring-4 ring-cyan-100' : 'border-[#b9cae1] text-[#a6b8d1]'}`}>
+-                  {complete ? <Check size={13} strokeWidth={3} /> : active ? <span className="w-2 h-2 rounded-full bg-current animate-pulse" /> : <span className="w-1.5 h-1.5 rounded-full bg-current" />}
+-                </div>
+-                <strong className={`mt-2 text-[10.5px] ${failed ? 'text-rose-600' : complete || active ? 'text-[#0c244d]' : 'text-[#7589b2]'}`}>{phase.label}</strong>
+-                <span className="text-[8.5px] text-[#9aacca] mt-0.5 whitespace-nowrap">{phase.detail}</span>
++              const state = stateFor(phase.id);
++              const complete = state === 'complete';
++              const active = state === 'active';
++              const failed = state === 'error';
++              const detail = complete ? phase.completeDetail : active ? phase.activeDetail : failed ? 'Check failed' : 'Waiting';
++              return <div key={phase.id} className={`rounded-2xl border p-3.5 transition ${failed ? 'border-rose-200 bg-rose-50' : active ? 'border-blue-200 bg-blue-50/70 shadow-[0_10px_30px_rgba(59,130,246,.08)]' : complete ? 'border-emerald-100 bg-emerald-50/70' : 'border-slate-100 bg-slate-50/70'}`}>
++                <div className="flex items-center gap-2"><div className={`grid h-6 w-6 place-items-center rounded-full ${failed ? 'bg-rose-500 text-white' : complete ? 'bg-emerald-500 text-white' : active ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-400'}`}>{complete ? <Check size={13} strokeWidth={3}/> : active ? <span className="h-2 w-2 animate-pulse rounded-full bg-white"/> : <span className="h-1.5 w-1.5 rounded-full bg-current"/>}</div><strong className="text-[10px] text-slate-800">{phase.label}</strong></div>
++                <div className={`mt-2 text-[8.5px] font-semibold leading-4 ${failed ? 'text-rose-600' : complete ? 'text-emerald-700' : active ? 'text-blue-700' : 'text-slate-400'}`}>{detail}</div>
+               </div>;
+             })}
+           </div>
+-        </div>
+-
+-        {error ? (
+-          <div className="mt-8 w-[470px] rounded-2xl border border-rose-200 bg-white/88 backdrop-blur-xl px-4 py-3 shadow-[0_16px_38px_rgba(100,80,120,.08)]">
+-            <div className="text-[11px] font-bold text-rose-700">{error}</div>
+-            <div className="flex items-center justify-center gap-2 mt-3">
+-              <button onClick={() => setRunId((value) => value + 1)} className="h-9 px-4 rounded-xl bg-[#0f315f] text-white text-[10px] font-extrabold">Retry checks</button>
+-              <button onClick={() => void backToSignIn()} className="h-9 px-4 rounded-xl border border-[#cfdeed] bg-white text-[#4e678b] text-[10px] font-extrabold">Back to sign in</button>
+-            </div>
+-          </div>
+-        ) : (
+-          <div className="mt-8 inline-flex items-center gap-3 rounded-2xl border border-[#d8e8f4] bg-white/76 backdrop-blur-xl px-5 py-3 shadow-[0_14px_36px_rgba(68,120,165,.07)]">
+-            <ShieldCheck size={20} className="text-[#0ca5a1]" />
+-            <div className="text-left">
+-              <div className="text-[10.5px] font-extrabold text-[#126978]">Your session is being verified against real control-plane APIs.</div>
+-              <div className="text-[9px] text-[#7389aa] mt-0.5">No synthetic health result is used to unlock the dashboard.</div>
+-            </div>
+-          </div>
+-        )}
+-      </div>
+ 
+-      <div className="absolute inset-x-0 bottom-0 h-[235px] pointer-events-none overflow-hidden">
+-        <svg className="w-full h-full" viewBox="0 0 1368 235" preserveAspectRatio="none" fill="none">
+-          <path d="M0 95C200 20 375 197 620 124C875 48 1080 40 1368 116V235H0V95Z" fill="url(#connectWaveA)" opacity=".23" />
+-          <path d="M0 140C225 72 430 221 710 150C960 87 1160 166 1368 96V235H0V140Z" fill="url(#connectWaveB)" opacity=".35" />
+-          <path d="M0 182C300 112 515 236 820 178C1100 126 1240 197 1368 158V235H0V182Z" fill="url(#connectWaveC)" opacity=".34" />
+-          <defs>
+-            <linearGradient id="connectWaveA" x1="0" y1="0" x2="1368" y2="0"><stop stopColor="#60a5fa"/><stop offset=".52" stopColor="#38bdf8"/><stop offset="1" stopColor="#34d399"/></linearGradient>
+-            <linearGradient id="connectWaveB" x1="0" y1="0" x2="1368" y2="0"><stop stopColor="#93c5fd"/><stop offset=".48" stopColor="#0ea5e9"/><stop offset="1" stopColor="#2dd4bf"/></linearGradient>
+-            <linearGradient id="connectWaveC" x1="0" y1="0" x2="1368" y2="0"><stop stopColor="#dbeafe"/><stop offset=".45" stopColor="#38bdf8"/><stop offset="1" stopColor="#a7f3d0"/></linearGradient>
+-          </defs>
+-        </svg>
