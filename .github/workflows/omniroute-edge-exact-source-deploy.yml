@@ -112,6 +112,15 @@ jobs:
           test "$(find deploy-src -type f | wc -l | tr -d ' ')" = '160'
           echo 'AUTH V2 EXACT SOURCE VERIFIED'
 
+      - name: Apply auth UI lucide compatibility fix
+        run: |
+          set -euo pipefail
+          echo 'b0fc46c248322c083647dcf84adb59ed7358ea76547b441f7a438117f4e325a3  deploy-artifacts/omniroute-edge-auth-v2/fixes/lucide-github.patch' | sha256sum -c -
+          git apply --check --directory=deploy-src deploy-artifacts/omniroute-edge-auth-v2/fixes/lucide-github.patch
+          git apply --directory=deploy-src deploy-artifacts/omniroute-edge-auth-v2/fixes/lucide-github.patch
+          echo '2166e1ef17aea7f90ce280cebb84c6d515a7ddbbb3e188709c446af70cf0dae1  src/components/DreamWorkerAuthScreen.tsx' | (cd deploy-src && sha256sum -c -)
+          echo 'AUTH V2 LUCIDE COMPATIBILITY FIX VERIFIED'
+
       - name: Sanitized bundle safety gate
         working-directory: deploy-src
         run: |
