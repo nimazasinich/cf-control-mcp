@@ -1,0 +1,201 @@
++          {error ? <div className="mt-6 flex items-center justify-between gap-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3"><div className="text-[10px] font-bold text-rose-700">{error}</div><div className="flex shrink-0 gap-2"><button onClick={() => setRunId((value) => value + 1)} className="rounded-xl bg-slate-950 px-4 py-2 text-[9px] font-black text-white">Retry checks</button><button onClick={() => void backToSignIn()} className="rounded-xl border border-rose-200 bg-white px-4 py-2 text-[9px] font-black text-rose-700">Back to sign in</button></div></div> : <div className="mt-6 flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-3 text-[9.5px] font-semibold text-slate-500"><ShieldCheck size={15} className="text-emerald-600"/>No synthetic status unlocks this screen. Navigation occurs only after the real checks complete.</div>}
++        </section>
+       </div>
+     </div>
+   );
+diff --git a/src/server/app.ts b/src/server/app.ts
+index fc0bf04..2e3dcc7 100644
+--- a/src/server/app.ts
++++ b/src/server/app.ts
+@@ -25,9 +25,11 @@ import {
+   csrfCookie,
+   ensureInitialAdmin,
+   findSession,
++  findUserByIdentifier,
+   hashOpaque,
+   loginRateState,
+   normalizeEmail,
++  normalizeUsername,
+   oauthProviderConfig,
+   oauthStateCookie,
+   parseCookies,
+@@ -40,6 +42,7 @@ import {
+   sessionCookie,
+   shouldUseSecureCookie,
+   validatePassword,
++  validateUsername,
+   verifyCsrf,
+   type AuthSessionRow,
+   type AuthUserRow,
+@@ -204,23 +207,24 @@ app.get('/api/auth/permissions', async (c) => {
+ 
+ app.post('/api/auth/login', async (c) => {
+   const db = c.get('db');
+-  const body = await c.req.json().catch(() => ({})) as { email?: unknown; password?: unknown };
+-  const email = normalizeEmail(body.email);
++  const body = await c.req.json().catch(() => ({})) as { identifier?: unknown; email?: unknown; password?: unknown };
++  const rawIdentifier = String(body.identifier ?? body.email ?? '').trim();
++  const identifier = rawIdentifier.includes('@') ? normalizeEmail(rawIdentifier) : normalizeUsername(rawIdentifier);
+   const password = String(body.password ?? '');
+-  if (!email || !password) return authError(c, 400, 'INVALID_INPUT', 'Email and password are required.');
++  if (!identifier || !password) return authError(c, 400, 'INVALID_INPUT', 'Username or email and password are required.');
+ 
+-  const rate = await loginRateState(db, email);
++  const rate = await loginRateState(db, identifier);
+   if (!rate.allowed) return authError(c, 429, 'TOO_MANY_ATTEMPTS', 'Too many failed sign-in attempts. Try again later.');
+ 
+-  let user = await db.query.authUsers.findFirst({ where: eq(authUsers.email, email) });
+-  if (!user) user = await ensureInitialAdmin(db, c.env, email, password);
++  let user = await findUserByIdentifier(db, identifier);
++  if (!user && identifier.includes('@')) user = await ensureInitialAdmin(db, c.env, identifier, password);
+   const valid = Boolean(user?.passwordHash) && await bcrypt.compare(password, user!.passwordHash!);
+   if (!user || !valid || user.status !== 'active') {
+-    await recordLoginAttempt(db, email, false);
+-    return authError(c, 401, 'INVALID_CREDENTIALS', 'Email or password is incorrect.');
++    await recordLoginAttempt(db, identifier, false);
++    return authError(c, 401, 'INVALID_CREDENTIALS', 'Username/email or password is incorrect.');
+   }
+ 
+-  await recordLoginAttempt(db, email, true);
++  await recordLoginAttempt(db, identifier, true);
+   const now = Date.now();
+   await db.update(authUsers).set({ lastLoginAt: now, updatedAt: now }).where(eq(authUsers.id, user.id));
+   const freshUser = await db.query.authUsers.findFirst({ where: eq(authUsers.id, user.id) }) ?? user;
+@@ -247,13 +251,17 @@ app.post('/api/auth/bootstrap', async (c) => {
+   const supplied = c.req.header('X-Bootstrap-Secret')?.trim() ?? '';
+   if (!expected) return authError(c, 503, 'BOOTSTRAP_NOT_CONFIGURED', 'BOOTSTRAP_SECRET is not configured.');
+   if (!supplied || !safeEqual(expected, supplied)) return authError(c, 403, 'BOOTSTRAP_FORBIDDEN', 'Bootstrap secret is invalid.');
+-  const body = await c.req.json().catch(() => ({})) as { email?: unknown; password?: unknown; displayName?: unknown };
++  const body = await c.req.json().catch(() => ({})) as { email?: unknown; username?: unknown; password?: unknown; displayName?: unknown };
+   const email = normalizeEmail(body.email);
++  const username = normalizeUsername(body.username);
+   const password = String(body.password ?? '');
+   const passwordError = validatePassword(password);
++  const usernameError = validateUsername(username);
+   if (!email.includes('@')) return authError(c, 400, 'INVALID_EMAIL', 'A valid administrator email is required.');
++  if (usernameError) return authError(c, 400, 'INVALID_USERNAME', usernameError);
++  if (await db.query.authUsers.findFirst({ where: eq(authUsers.username, username) })) return authError(c, 409, 'USERNAME_TAKEN', 'That administrator username is already in use.');
+   if (passwordError) return authError(c, 400, 'WEAK_PASSWORD', passwordError);
+-  const user = await createUser(db, { email, password, displayName: String(body.displayName ?? '').trim() || 'Administrator' });
++  const user = await createUser(db, { email, username, password, displayName: String(body.displayName ?? '').trim() || 'Administrator' });
+   const session = await createSession(db, user.id, c.env, c.req.header('User-Agent'));
+   setSessionCookies(c, session, shouldUseSecureCookie(c.env, c.req.url));
+   return c.json({ user: publicUser(user), expiresAt: session.expiresAt }, 201);
+diff --git a/src/server/browserAuth.ts b/src/server/browserAuth.ts
+index 73078df..d3b4326 100644
+--- a/src/server/browserAuth.ts
++++ b/src/server/browserAuth.ts
+@@ -11,6 +11,7 @@ export type AuthSessionRow = typeof authSessions.$inferSelect;
+ export interface BrowserAuthConfig {
+   BOOTSTRAP_SECRET?: string;
+   INITIAL_ADMIN_EMAIL?: string;
++  INITIAL_ADMIN_USERNAME?: string;
+   INITIAL_ADMIN_PASSWORD?: string;
+   AUTH_SESSION_TTL_HOURS?: string;
+   AUTH_COOKIE_SECURE?: string;
+@@ -35,6 +36,16 @@ export function normalizeEmail(value: unknown): string {
+   return String(value ?? '').trim().toLowerCase();
+ }
+ 
++export function normalizeUsername(value: unknown): string {
++  return String(value ?? '').trim().toLowerCase();
++}
++
++export function validateUsername(username: string): string | null {
++  if (username.length < 3 || username.length > 64) return 'Username must be between 3 and 64 characters.';
++  if (!/^[a-z0-9][a-z0-9._-]*$/.test(username)) return 'Username may contain lowercase letters, numbers, dots, underscores, and hyphens.';
++  return null;
++}
++
+ export function validatePassword(password: string): string | null {
+   if (password.length < 12) return 'Password must be at least 12 characters.';
+   const classes = [/[a-z]/.test(password), /[A-Z]/.test(password), /\d/.test(password), /[^A-Za-z0-9]/.test(password)].filter(Boolean).length;
+@@ -112,6 +123,7 @@ export function publicUser(user: AuthUserRow | null | undefined) {
+   return {
+     id: user.id,
+     email: user.email,
++    username: user.username ?? null,
+     displayName: user.displayName,
+     role: user.role,
+     status: user.status,
+@@ -120,15 +132,21 @@ export function publicUser(user: AuthUserRow | null | undefined) {
+   };
+ }
+ 
+-export async function createUser(db: AppDb, input: { email: string; displayName?: string; password?: string | null; oauthProvider?: string | null; oauthSubject?: string | null }): Promise<AuthUserRow> {
++export async function createUser(db: AppDb, input: { email: string; username?: string | null; displayName?: string; password?: string | null; oauthProvider?: string | null; oauthSubject?: string | null }): Promise<AuthUserRow> {
+   const email = normalizeEmail(input.email);
+   if (!email || !email.includes('@')) throw new Error('A valid email address is required.');
++  const username = input.username == null || input.username === '' ? null : normalizeUsername(input.username);
++  if (username) {
++    const usernameError = validateUsername(username);
++    if (usernameError) throw new Error(usernameError);
++  }
+   const passwordHash = input.password ? await bcrypt.hash(input.password, 12) : null;
+   const now = Date.now();
+   const id = uuidv4();
+   await db.insert(authUsers).values({
+     id,
+     email,
++    username,
+     displayName: input.displayName?.trim() || email.split('@')[0] || 'Administrator',
+     passwordHash,
+     role: 'admin',
+@@ -144,6 +162,18 @@ export async function createUser(db: AppDb, input: { email: string; displayName?
+   return user;
+ }
+ 
++export async function findUserByIdentifier(db: AppDb, value: unknown): Promise<AuthUserRow | null> {
++  const identifier = String(value ?? '').trim();
++  if (!identifier) return null;
++  if (identifier.includes('@')) {
++    const email = normalizeEmail(identifier);
++    return (await db.query.authUsers.findFirst({ where: eq(authUsers.email, email) })) ?? null;
++  }
++  const username = normalizeUsername(identifier);
++  if (validateUsername(username)) return null;
++  return (await db.query.authUsers.findFirst({ where: eq(authUsers.username, username) })) ?? null;
++}
++
+ export async function ensureInitialAdmin(db: AppDb, config: BrowserAuthConfig, email: string, password: string): Promise<AuthUserRow | null> {
+   const existing = await db.query.authUsers.findFirst({ where: eq(authUsers.email, email) });
+   if (existing) return existing;
+@@ -152,7 +182,9 @@ export async function ensureInitialAdmin(db: AppDb, config: BrowserAuthConfig, e
+   if (!initialEmail || !initialPassword || !safeEqual(email, initialEmail) || !safeEqual(password, initialPassword)) return null;
+   const error = validatePassword(initialPassword);
+   if (error) throw new Error(`INITIAL_ADMIN_PASSWORD is not acceptable: ${error}`);
+-  return createUser(db, { email: initialEmail, displayName: 'Administrator', password: initialPassword });
++  const configuredUsername = normalizeUsername(config.INITIAL_ADMIN_USERNAME);
++  const username = configuredUsername && !validateUsername(configuredUsername) ? configuredUsername : null;
++  return createUser(db, { email: initialEmail, username, displayName: 'Administrator', password: initialPassword });
+ }
+ 
+ export async function createSession(db: AppDb, userId: string, config: BrowserAuthConfig, userAgent?: string | null) {
+@@ -208,8 +240,8 @@ export async function revokeUserSessions(db: AppDb, userId: string): Promise<voi
+   await db.delete(authSessions).where(eq(authSessions.userId, userId));
+ }
+ 
+-export async function loginRateState(db: AppDb, email: string) {
+-  const emailHash = hashOpaque(email);
++export async function loginRateState(db: AppDb, identifier: string) {
++  const emailHash = hashOpaque(identifier);
+   const since = Date.now() - LOGIN_WINDOW_MS;
+   const rows = await db.select({ count: sql<number>`count(*)` }).from(authLoginAttempts).where(and(
+     eq(authLoginAttempts.emailHash, emailHash),
+@@ -220,8 +252,8 @@ export async function loginRateState(db: AppDb, email: string) {
+   return { allowed: failures < LOGIN_FAILURE_LIMIT, failures, retryAfterMs: failures < LOGIN_FAILURE_LIMIT ? 0 : LOGIN_WINDOW_MS };
+ }
+ 
+-export async function recordLoginAttempt(db: AppDb, email: string, success: boolean): Promise<void> {
+-  await db.insert(authLoginAttempts).values({ id: uuidv4(), emailHash: hashOpaque(email), attemptedAt: Date.now(), success });
++export async function recordLoginAttempt(db: AppDb, identifier: string, success: boolean): Promise<void> {
++  await db.insert(authLoginAttempts).values({ id: uuidv4(), emailHash: hashOpaque(identifier), attemptedAt: Date.now(), success });
+ }
+ 
+ export function oauthProviderConfig(config: BrowserAuthConfig, provider: string) {
+diff --git a/src/server/db/node.ts b/src/server/db/node.ts
+index d36dd9b..4d0cf65 100644
+--- a/src/server/db/node.ts
++++ b/src/server/db/node.ts
+@@ -213,6 +213,7 @@ async function runMigrations(execClient: Client, opts: { seedAdminKey: boolean }
+     CREATE TABLE IF NOT EXISTS auth_users (
