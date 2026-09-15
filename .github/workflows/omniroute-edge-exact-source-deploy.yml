@@ -85,12 +85,14 @@ jobs:
 
           cat deploy-artifacts/omniroute-edge-auth-v2/patch/part-{00..05}.txt > /tmp/auth-redesign.patch
           echo '78421c7ad56114e37fdf996c784d26f40fe225e924f874b5a8c4773c4fca1633  /tmp/auth-redesign.patch' | sha256sum -c -
-          (
-            cd deploy-src
-            git apply --check /tmp/auth-redesign.patch
-            git apply /tmp/auth-redesign.patch
-          )
+          git apply --check --directory=deploy-src /tmp/auth-redesign.patch
+          git apply --directory=deploy-src /tmp/auth-redesign.patch
           rm -f /tmp/auth-redesign.patch
+
+          mkdir -p deploy-src/drizzle deploy-src/test-node deploy-src/src/server/__tests__
+          cp deploy-artifacts/omniroute-edge-auth-v2/new/0006_auth_username.sql deploy-src/drizzle/0006_auth_username.sql
+          cp deploy-artifacts/omniroute-edge-auth-v2/new/auth-username-loading-contract.test.mjs deploy-src/test-node/auth-username-loading-contract.test.mjs
+          cp deploy-artifacts/omniroute-edge-auth-v2/new/browser-auth-username.test.ts deploy-src/src/server/__tests__/browser-auth-username.test.ts
 
           cat <<'HASHES' | (cd deploy-src && sha256sum -c -)
           fc385dab77e8ea21a6de369b9e4ca4aaa86f7aa1df7b06d723979a5dbe1dcbce  server.ts
