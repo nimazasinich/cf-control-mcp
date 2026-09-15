@@ -1,0 +1,21 @@
+diff --git a/src/components/DreamWorkerAuthScreen.tsx b/src/components/DreamWorkerAuthScreen.tsx
+index 227b20c..6ad8db8 100644
+--- a/src/components/DreamWorkerAuthScreen.tsx
++++ b/src/components/DreamWorkerAuthScreen.tsx
+@@ -7,7 +7,6 @@ import {
+   Cloud,
+   Eye,
+   EyeOff,
+-  Github,
+   KeyRound,
+   Lock,
+   Mail,
+@@ -50,7 +49,7 @@ function ProductMark({ compact = false }: { compact?: boolean }) {
+ }
+ 
+ function ProviderLogo({ provider }: { provider: BrowserAuthProvider }) {
+-  if (provider === 'github') return <Github size={17} />;
++  if (provider === 'github') return <span className="text-[10px] font-black tracking-[-.04em]">GH</span>;
+   if (provider === 'google') return <span className="text-[15px] font-black text-[#4285F4]">G</span>;
+   return <span className="grid h-4 w-4 grid-cols-2 gap-[1px]"><i className="bg-[#F25022]"/><i className="bg-[#7FBA00]"/><i className="bg-[#00A4EF]"/><i className="bg-[#FFB900]"/></span>;
+ }
