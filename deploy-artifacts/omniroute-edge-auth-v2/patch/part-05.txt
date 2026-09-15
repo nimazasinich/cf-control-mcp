@@ -1,0 +1,50 @@
+       id TEXT PRIMARY KEY,
+       email TEXT NOT NULL UNIQUE,
++      username TEXT,
+       display_name TEXT NOT NULL DEFAULT 'Administrator',
+       password_hash TEXT,
+       role TEXT NOT NULL DEFAULT 'admin',
+@@ -224,6 +225,11 @@ async function runMigrations(execClient: Client, opts: { seedAdminKey: boolean }
+       last_login_at INTEGER
+     )
+   `);
++  const authUserColumns = await execClient.execute('PRAGMA table_info(auth_users)');
++  const authUserColumnNames = new Set(authUserColumns.rows.map((row) => String(row.name)));
++  if (!authUserColumnNames.has('username')) await execClient.execute('ALTER TABLE auth_users ADD COLUMN username TEXT');
++  await execClient.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_users_username ON auth_users(username) WHERE username IS NOT NULL');
++
+   await execClient.execute(`
+     CREATE TABLE IF NOT EXISTS auth_sessions (
+       id TEXT PRIMARY KEY,
+diff --git a/src/server/db/schema.ts b/src/server/db/schema.ts
+index 2ecf5d7..9d1fba9 100644
+--- a/src/server/db/schema.ts
++++ b/src/server/db/schema.ts
+@@ -138,6 +138,7 @@ export const requestAttempts = sqliteTable("request_attempts", {
+ export const authUsers = sqliteTable("auth_users", {
+   id: text("id").primaryKey(),
+   email: text("email").notNull().unique(),
++  username: text("username").unique(),
+   displayName: text("display_name").notNull().default("Administrator"),
+   passwordHash: text("password_hash"),
+   role: text("role").notNull().default("admin"),
+diff --git a/src/worker.ts b/src/worker.ts
+index 238c9d9..b1613ba 100644
+--- a/src/worker.ts
++++ b/src/worker.ts
+@@ -28,6 +28,7 @@ interface WorkerEnv {
+   OMNIROUTE_ORIGIN?: string;
+   OMNIROUTE_ORIGIN_TOKEN?: string;
+   INITIAL_ADMIN_EMAIL?: string;
++  INITIAL_ADMIN_USERNAME?: string;
+   INITIAL_ADMIN_PASSWORD?: string;
+   AUTH_SESSION_TTL_HOURS?: string;
+   AUTH_COOKIE_SECURE?: string;
+@@ -123,6 +124,7 @@ export default {
+       OMNIROUTE_ORIGIN_TOKEN: env.OMNIROUTE_ORIGIN_TOKEN,
+       ENVIRONMENT: env.ENVIRONMENT,
+       INITIAL_ADMIN_EMAIL: env.INITIAL_ADMIN_EMAIL,
++      INITIAL_ADMIN_USERNAME: env.INITIAL_ADMIN_USERNAME,
+       INITIAL_ADMIN_PASSWORD: env.INITIAL_ADMIN_PASSWORD,
+       AUTH_SESSION_TTL_HOURS: env.AUTH_SESSION_TTL_HOURS,
+       AUTH_COOKIE_SECURE: env.AUTH_COOKIE_SECURE,
