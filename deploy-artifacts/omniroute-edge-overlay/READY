@@ -7,4 +7,4 @@ migration=drizzle/0006_auth_username.sql
 routing_authority=omniroute
 inference_without_origin=BLOCKED_NOT_CONFIGURED
 trigger=deploy
-attempt=6
+attempt=7
