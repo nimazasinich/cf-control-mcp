@@ -28,13 +28,12 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Reassemble exact current source and verify SHA256
+      - name: Reassemble base source, apply auth v2 patch, verify exact bytes
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
-          import base64
-          import hashlib
+          import base64, hashlib
 
           root = Path('deploy-artifacts/omniroute-edge-exact-xz')
           parts = [(root / f'part-{i:03d}.b64').read_text(encoding='ascii') for i in range(16)]
@@ -43,54 +42,21 @@ jobs:
               data = text.encode('ascii')
               return hashlib.sha1(f'blob {len(data)}\0'.encode('ascii') + data).hexdigest()
 
-          # GitHub connector transport defects were independently reproduced from the
-          # canonical local chunks. Fail closed if the observed transport changes.
-          observed_transport = {
+          observed = {
               4: (17999, 'c0ebe938a9e3462cff6db2bdddc238146a900be6'),
               6: (17999, '9dc231247a2b7103fbbf566d62017086019d09c2'),
               10: (18000, '1b5e2ec750dcbee041a539d7fc7415c197935276'),
           }
-          for index, (size, sha) in observed_transport.items():
-              actual_size = len(parts[index].encode('ascii'))
-              actual_sha = git_blob_sha(parts[index])
-              if (actual_size, actual_sha) != (size, sha):
-                  raise SystemExit(
-                      f'Unexpected transport state for part-{index:03d}: '
-                      f'size={actual_size} sha={actual_sha}'
-                  )
+          for index, expected in observed.items():
+              actual = (len(parts[index].encode('ascii')), git_blob_sha(parts[index]))
+              if actual != expected:
+                  raise SystemExit(f'Unexpected transport state for part-{index:03d}: {actual}')
 
-          # Deterministic inverse repairs for the three known connector transcription defects.
-          parts[4] = parts[4] + 'L'
+          parts[4] += 'L'
           parts[6] = parts[6][:12364] + 'C' + parts[6][12364:]
           if parts[10][6686] != 't':
               raise SystemExit('Unexpected part-010 transport byte at offset 6686')
           parts[10] = parts[10][:6686] + 'T' + parts[10][6687:]
-
-          expected_git_blobs = [
-              '31fd024af90e5241204518f67a84ed8435ea7316',
-              '9d31f4283f537248a9164a8194dd5be07b30e9e1',
-              'db67f068f9dfab23db369081a0f9e3490cc99ea9',
-              '6d50bfa6e3ef37e46f5ee3a89ee1cc1ac76dc2d7',
-              '3ce5d69589186dbaabf8075a7b36ac0a4c9f001b',
-              '13284865b496eb04bc27eb6fb942f9d26271701e',
-              '4a6db81d7f12460b05cfce2aa46fe9fcb08a83e4',
-              '29b7e7f24bef29d2c09ae3e59d6cc383b45ef4ec',
-              'a9f4d58469bcf085fe51b119c2ea950e3d3bae0d',
-              '65f787200b2a52a8308f0cb0c0801e39cd5c70e7',
-              'd27b3d86a48e7c354d567b4c649936c12974421c',
-              'e607dddb7653723fd89e816ffc994a8d7c0043cb',
-              '12c0ecf66b8fb254fa8a2c6ef2e8dec1f886bda9',
-              '688f0115965a3f76b74460855165da43f395277f',
-              '9b33ea590e070b6842a5ed6772978dbf2433f450',
-              '9b38b3d4cf855367ac44741e7609f80af5536a81',
-          ]
-          for index, expected in enumerate(expected_git_blobs):
-              actual = git_blob_sha(parts[index])
-              if actual != expected:
-                  raise SystemExit(
-                      f'Exact chunk verification failed for part-{index:03d}: '
-                      f'expected={expected} actual={actual}'
-                  )
 
           payload = ''.join(parts)
           if len(payload) != 276440:
@@ -98,27 +64,51 @@ jobs:
           archive = base64.b64decode(payload, validate=True)
           if len(archive) != 207328:
               raise SystemExit(f'Unexpected archive size: {len(archive)}')
-          archive_sha = hashlib.sha256(archive).hexdigest()
-          expected_archive_sha = 'db08798a4e24ac2c3199a098c5f2a353d84b74be8a1e80581e1bac81a234274d'
-          if archive_sha != expected_archive_sha:
-              raise SystemExit(
-                  f'Exact archive SHA256 mismatch: expected={expected_archive_sha} actual={archive_sha}'
-              )
+          expected_sha = 'db08798a4e24ac2c3199a098c5f2a353d84b74be8a1e80581e1bac81a234274d'
+          actual_sha = hashlib.sha256(archive).hexdigest()
+          if actual_sha != expected_sha:
+              raise SystemExit(f'Base archive SHA mismatch: {actual_sha}')
           Path('/tmp/omniroute-edge.tar.xz').write_bytes(archive)
-          print(f'Exact transport SHA256: {archive_sha}')
+          print(f'BASE SOURCE SHA256 VERIFIED: {actual_sha}')
           PY
 
           rm -rf deploy-src
           mkdir deploy-src
           tar -xJf /tmp/omniroute-edge.tar.xz -C deploy-src
           rm -f /tmp/omniroute-edge.tar.xz
-
           test "$(find deploy-src -type f | wc -l | tr -d ' ')" = '156'
+
           mkdir -p deploy-src/public
           cp secure-ai-router/public/dashboard-hub.png deploy-src/public/dashboard-hub.png
           echo 'd17e323b86e1e6fddd5080fca6f5da5932067a49c8dd0f7a7d218daed928ecdd  deploy-src/public/dashboard-hub.png' | sha256sum -c -
           test "$(find deploy-src -type f | wc -l | tr -d ' ')" = '157'
-          echo 'EXACT CURRENT SOURCE VERIFIED'
+
+          cat deploy-artifacts/omniroute-edge-auth-v2/patch/part-{00..05}.txt > /tmp/auth-redesign.patch
+          echo '78421c7ad56114e37fdf996c784d26f40fe225e924f874b5a8c4773c4fca1633  /tmp/auth-redesign.patch' | sha256sum -c -
+          (
+            cd deploy-src
+            git apply --check /tmp/auth-redesign.patch
+            git apply /tmp/auth-redesign.patch
+          )
+          rm -f /tmp/auth-redesign.patch
+
+          cat <<'HASHES' | (cd deploy-src && sha256sum -c -)
+          fc385dab77e8ea21a6de369b9e4ca4aaa86f7aa1df7b06d723979a5dbe1dcbce  server.ts
+          43a2f7707ba16feedeac4e9428412e7a54a374c4a8370c12ab45450536e4df60  src/auth/browserSession.ts
+          94c9cc5d542179f0bd61b6f2fa584993f1ef93920bd31294c2f8d9cfe43b5098  src/components/DreamWorkerAuthScreen.tsx
+          6763d6058029f6957c4d0316a3a8df2753fd8694447afc1da5578c87bd543e1b  src/components/DreamWorkerLoadingScreen.tsx
+          48d0fb45e279852ff5daf68ae1a3cb67ae5a89814886dfe5e32db3396d46f340  src/server/app.ts
+          fff65597f5b75fabbedb6efb2c3306f7c3ccf4778491c4733d8b4874eeb2ba18  src/server/browserAuth.ts
+          60e80b1cb104c46355b6f5b2e1dc4c71f3a065c547c6d527aca6363d5919c7e4  src/server/db/node.ts
+          f147f9d7fe59ded16510dbe1b0290b7c9c8afd5aec4322419bfc3bbb339f2563  src/server/db/schema.ts
+          3fc35d7d04bc8effa191f9cf83fa75536fc81220ac34e868349c57ae777dc8e4  src/worker.ts
+          f1db8df4c8a40a902b2d25332df382d09a9790af4531c42d7eebaabdba3029df  drizzle/0006_auth_username.sql
+          33203ab507781fe88ac264bedb28f1f1a731beafbdd145f2c2211088e0b82102  test-node/auth-username-loading-contract.test.mjs
+          1b09e835db20d0b66b12d307b691ff581074a509b4f863acc7902288583be734  src/server/__tests__/browser-auth-username.test.ts
+          HASHES
+
+          test "$(find deploy-src -type f | wc -l | tr -d ' ')" = '160'
+          echo 'AUTH V2 EXACT SOURCE VERIFIED'
 
       - name: Sanitized bundle safety gate
         working-directory: deploy-src
@@ -182,7 +172,6 @@ jobs:
         run: |
           set -euo pipefail
           config="$PWD/wrangler.toml"
-          test -f "$config"
           npx --yes wrangler@4.36.0 deploy --dry-run --config "$config" --name omniroute-edge | tee /tmp/wrangler-dry-run.log
           grep -Fq 'env.DB (omniroute-edge-db)' /tmp/wrangler-dry-run.log
           grep -Fq 'env.RATE_LIMITER' /tmp/wrangler-dry-run.log
@@ -190,6 +179,19 @@ jobs:
           ! grep -Fq 'env.DM_DB (DM_DB)' /tmp/wrangler-dry-run.log
           ! grep -Fq 'env.CF_AIG_GATEWAY_SLUG' /tmp/wrangler-dry-run.log
           echo 'WRANGLER TARGET IDENTITY PASS: omniroute-edge'
+
+      - name: Apply additive D1 username migration and verify schema
+        working-directory: deploy-src
+        run: |
+          set -euo pipefail
+          config="$PWD/wrangler.toml"
+          npx --yes wrangler@4.36.0 d1 migrations list DB --remote --config "$config"
+          npx --yes wrangler@4.36.0 d1 migrations apply DB --remote --config "$config"
+          npx --yes wrangler@4.36.0 d1 execute DB --remote --config "$config" --command "SELECT name FROM pragma_table_info('auth_users') WHERE name='username';" --json | tee /tmp/d1-column.json
+          grep -Fq 'username' /tmp/d1-column.json
+          npx --yes wrangler@4.36.0 d1 execute DB --remote --config "$config" --command "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_auth_users_username';" --json | tee /tmp/d1-index.json
+          grep -Fq 'idx_auth_users_username' /tmp/d1-index.json
+          echo 'D1 AUTH USERNAME MIGRATION VERIFIED'
 
       - name: Deploy existing OmniRoute Worker
         id: deploy
@@ -208,36 +210,49 @@ jobs:
           echo "Worker version: $version"
           echo "Worker URL: $url"
 
-      - name: Public production smoke
+      - name: Public production smoke with propagation retry
         env:
           WORKER_URL: ${{ steps.deploy.outputs.url }}
         run: |
           set -euo pipefail
           test "$WORKER_URL" = 'https://omniroute-edge.amin-chinisaz-edu.workers.dev'
 
-          check_2xx_4xx() {
-            path="$1"
-            code=$(curl -sS -L -o /tmp/body -w '%{http_code}' "$WORKER_URL$path")
-            echo "$path HTTP $code"
-            test "$code" -ge 200
-            test "$code" -lt 500
+          expect_code() {
+            path="$1" expected="$2" follow="${3:-0}"
+            for attempt in 1 2 3 4 5; do
+              nonce="$(date +%s%N)"
+              args=(-sS -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' -H 'Cookie:' -o /tmp/body -w '%{http_code}')
+              if [ "$follow" = '1' ]; then args+=(-L); fi
+              code=$(curl "${args[@]}" "$WORKER_URL$path?probe=$nonce")
+              echo "$path attempt=$attempt HTTP $code expected=$expected"
+              if [ "$code" = "$expected" ]; then return 0; fi
+              sleep $((attempt * 2))
+            done
+            echo "Smoke mismatch for $path; last body follows:" >&2
+            cat /tmp/body >&2 || true
+            return 1
           }
 
-          check_exact() {
-            path="$1" expected="$2"
-            code=$(curl -sS -o /tmp/body -w '%{http_code}' "$WORKER_URL$path")
-            echo "$path HTTP $code"
-            test "$code" = "$expected"
-          }
-
-          check_2xx_4xx /
-          check_2xx_4xx /signin
-          check_2xx_4xx /dashboard-hub.png
-          check_2xx_4xx /api/health
-          check_2xx_4xx /api/auth/status
-          check_exact /api/auth/session 401
-          check_exact /api/v2/system/status 401
-          check_exact /v1/models 401
+          expect_code / 200 1
+          expect_code /signin 200 1
+          expect_code /dashboard-hub.png 200 1
+          expect_code /api/health 200
+          grep -Fq '"status":"ok"' /tmp/body
+          expect_code /api/auth/status 200
+          python - <<'PY'
+          import json
+          body=json.load(open('/tmp/body'))
+          assert body.get('authenticated') is False, body
+          assert body.get('user') is None, body
+          assert isinstance(body.get('bootstrapRequired'), bool), body
+          PY
+          expect_code /api/auth/session 401
+          grep -Fq 'AUTH_REQUIRED' /tmp/body
+          expect_code /api/v2/system/status 401
+          grep -Fq 'AUTH_REQUIRED' /tmp/body
+          expect_code /v1/models 401
+          grep -Fq 'invalid_api_key' /tmp/body
 
           echo 'CONTROL PLANE PUBLIC SMOKE PASS'
-          echo 'Inference classification: BLOCKED / NOT CONFIGURED unless OMNIROUTE_ORIGIN is configured by verified HTTPS.'
+          echo 'Username/password success remains pending real administrator bootstrap.'
+          echo 'Inference remains BLOCKED / NOT CONFIGURED while OMNIROUTE_ORIGIN is empty.'
