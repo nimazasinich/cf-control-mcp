@@ -1,0 +1,216 @@
+diff --git a/server.ts b/server.ts
+index 3c3c50e..b258ce1 100644
+--- a/server.ts
++++ b/server.ts
+@@ -24,6 +24,7 @@ async function start() {
+     OMNIROUTE_ORIGIN_TOKEN: process.env.OMNIROUTE_ORIGIN_TOKEN?.trim() || undefined,
+     ENVIRONMENT: process.env.ENVIRONMENT?.trim() || 'local',
+     INITIAL_ADMIN_EMAIL: process.env.INITIAL_ADMIN_EMAIL?.trim() || undefined,
++    INITIAL_ADMIN_USERNAME: process.env.INITIAL_ADMIN_USERNAME?.trim() || undefined,
+     INITIAL_ADMIN_PASSWORD: process.env.INITIAL_ADMIN_PASSWORD || undefined,
+     AUTH_SESSION_TTL_HOURS: process.env.AUTH_SESSION_TTL_HOURS?.trim() || undefined,
+     AUTH_COOKIE_SECURE: process.env.AUTH_COOKIE_SECURE?.trim() || undefined,
+diff --git a/src/auth/browserSession.ts b/src/auth/browserSession.ts
+index 1b3dafa..6aba94b 100644
+--- a/src/auth/browserSession.ts
++++ b/src/auth/browserSession.ts
+@@ -3,6 +3,7 @@ export type BrowserAuthProvider = 'google' | 'github' | 'microsoft';
+ export interface BrowserUser {
+   id: string;
+   email: string;
++  username: string | null;
+   displayName: string;
+   role: string;
+   status: string;
+@@ -88,18 +89,18 @@ export async function checkPermissions(): Promise<BrowserPermissions> {
+   return parseJson(await authFetch('/api/auth/permissions'));
+ }
+ 
+-export async function loginWithPassword(email: string, password: string): Promise<{ user: BrowserUser; expiresAt: number }> {
++export async function loginWithPassword(identifier: string, password: string): Promise<{ user: BrowserUser; expiresAt: number }> {
+   return parseJson(await authFetch('/api/auth/login', {
+     method: 'POST',
+-    body: JSON.stringify({ email, password }),
++    body: JSON.stringify({ identifier, password }),
+   }));
+ }
+ 
+-export async function bootstrapAdmin(input: { email: string; password: string; bootstrapSecret: string; displayName?: string }): Promise<{ user: BrowserUser; expiresAt: number }> {
++export async function bootstrapAdmin(input: { email: string; username: string; password: string; bootstrapSecret: string; displayName?: string }): Promise<{ user: BrowserUser; expiresAt: number }> {
+   return parseJson(await authFetch('/api/auth/bootstrap', {
+     method: 'POST',
+     headers: { 'X-Bootstrap-Secret': input.bootstrapSecret },
+-    body: JSON.stringify({ email: input.email, password: input.password, displayName: input.displayName }),
++    body: JSON.stringify({ email: input.email, username: input.username, password: input.password, displayName: input.displayName }),
+   }));
+ }
+ 
+diff --git a/src/components/DreamWorkerAuthScreen.tsx b/src/components/DreamWorkerAuthScreen.tsx
+index a8299db..227b20c 100644
+--- a/src/components/DreamWorkerAuthScreen.tsx
++++ b/src/components/DreamWorkerAuthScreen.tsx
+@@ -1,31 +1,57 @@
+ import React, { useEffect, useMemo, useState } from 'react';
+ import { useLocation, useNavigate } from 'react-router-dom';
+-import { ArrowRight, ChevronDown, Eye, EyeOff, Lock, Mail, Sun, X } from 'lucide-react';
+-import { authProviders, bootstrapAdmin, getAuthStatus, loginWithPassword, startOAuth, type BrowserAuthProvider } from '../auth/browserSession';
++import {
++  Activity,
++  ArrowRight,
++  Check,
++  Cloud,
++  Eye,
++  EyeOff,
++  Github,
++  KeyRound,
++  Lock,
++  Mail,
++  Network,
++  ShieldCheck,
++  UserRound,
++  X,
++} from 'lucide-react';
++import {
++  authProviders,
++  bootstrapAdmin,
++  getAuthStatus,
++  loginWithPassword,
++  startOAuth,
++  type BrowserAuthProvider,
++} from '../auth/browserSession';
+ import { useAuth } from '../auth/AuthProvider';
+ 
+-const providerLabels: Record<BrowserAuthProvider, string> = { google: 'Google', github: 'GitHub', microsoft: 'Microsoft' };
++const providerLabels: Record<BrowserAuthProvider, string> = {
++  google: 'Google',
++  github: 'GitHub',
++  microsoft: 'Microsoft',
++};
+ 
+ type ProviderMap = Record<BrowserAuthProvider, boolean>;
+ 
+-function WaveField() {
+-  return <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[280px] overflow-hidden">
+-    <svg viewBox="0 0 1368 300" className="h-full w-full" preserveAspectRatio="none" fill="none">
+-      <path d="M-50 158C120 94 205 257 392 220C593 180 621 302 862 235C1071 176 1197 98 1425 174V320H-50V158Z" fill="url(#authWaveA)" opacity=".34"/>
+-      <path d="M-30 215C135 151 247 275 439 230C618 188 713 292 925 225C1117 164 1228 128 1420 205V320H-30V215Z" fill="url(#authWaveB)" opacity=".28"/>
+-      <path d="M-40 244C176 176 314 286 502 252C688 219 806 301 1015 249C1169 211 1282 196 1420 237V320H-40V244Z" fill="url(#authWaveC)" opacity=".26"/>
+-      <defs>
+-        <linearGradient id="authWaveA" x1="0" y1="150" x2="1368" y2="150"><stop stopColor="#53C5F7"/><stop offset=".52" stopColor="#3693F4"/><stop offset="1" stopColor="#43E0BC"/></linearGradient>
+-        <linearGradient id="authWaveB" x1="0" y1="180" x2="1368" y2="180"><stop stopColor="#9DDCFF"/><stop offset=".55" stopColor="#3992F4"/><stop offset="1" stopColor="#92F4DE"/></linearGradient>
+-        <linearGradient id="authWaveC" x1="0" y1="205" x2="1368" y2="205"><stop stopColor="#D6EEFF"/><stop offset=".5" stopColor="#54ABF4"/><stop offset="1" stopColor="#C8FAED"/></linearGradient>
+-      </defs>
+-    </svg>
+-  </div>;
++function ProductMark({ compact = false }: { compact?: boolean }) {
++  return (
++    <div className="flex items-center gap-3">
++      <div className={`${compact ? 'h-10 w-10' : 'h-12 w-12'} relative grid place-items-center rounded-2xl bg-[linear-gradient(145deg,#0f6fff,#16b8d9_58%,#28c995)] text-white shadow-[0_14px_30px_rgba(15,111,255,.22)]`}>
++        <Cloud size={compact ? 22 : 25} strokeWidth={2.2} />
++        <span className="absolute -bottom-1 -right-1 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-400" />
++      </div>
++      <div>
++        <div className={`${compact ? 'text-[17px]' : 'text-[20px]'} font-black tracking-[-.035em] text-slate-950`}>Cloudflare AI Router</div>
++        <div className="mt-0.5 text-[10px] font-bold uppercase tracking-[.18em] text-slate-400">OmniRoute Control Plane</div>
++      </div>
++    </div>
++  );
+ }
+ 
+ function ProviderLogo({ provider }: { provider: BrowserAuthProvider }) {
+-  if (provider === 'github') return <span className="text-[11px] font-black tracking-[-.06em]">GH</span>;
+-  if (provider === 'google') return <span className="text-[16px] font-black text-[#4285F4]">G</span>;
++  if (provider === 'github') return <Github size={17} />;
++  if (provider === 'google') return <span className="text-[15px] font-black text-[#4285F4]">G</span>;
+   return <span className="grid h-4 w-4 grid-cols-2 gap-[1px]"><i className="bg-[#F25022]"/><i className="bg-[#7FBA00]"/><i className="bg-[#00A4EF]"/><i className="bg-[#FFB900]"/></span>;
+ }
+ 
+@@ -33,17 +59,22 @@ export const DreamWorkerAuthScreen: React.FC = () => {
+   const navigate = useNavigate();
+   const location = useLocation();
+   const { refreshSession } = useAuth();
+-  const [email, setEmail] = useState('');
++
++  const [identifier, setIdentifier] = useState('');
+   const [password, setPassword] = useState('');
+   const [showPassword, setShowPassword] = useState(false);
+   const [isSubmitting, setIsSubmitting] = useState(false);
+   const [error, setError] = useState('');
+   const [bootstrapRequired, setBootstrapRequired] = useState(false);
+   const [bootstrapOpen, setBootstrapOpen] = useState(false);
+-  const [bootstrapSecret, setBootstrapSecret] = useState('');
+-  const [displayName, setDisplayName] = useState('Administrator');
+   const [providers, setProviders] = useState<ProviderMap>({ google: false, github: false, microsoft: false });
+ 
++  const [bootstrapDisplayName, setBootstrapDisplayName] = useState('Administrator');
++  const [bootstrapUsername, setBootstrapUsername] = useState('admin');
++  const [bootstrapEmail, setBootstrapEmail] = useState('');
++  const [bootstrapPassword, setBootstrapPassword] = useState('');
++  const [bootstrapSecret, setBootstrapSecret] = useState('');
++
+   const oauthError = useMemo(() => new URLSearchParams(location.search).get('error'), [location.search]);
+ 
+   useEffect(() => {
+@@ -52,10 +83,8 @@ export const DreamWorkerAuthScreen: React.FC = () => {
+       if (!active) return;
+       setBootstrapRequired(status.bootstrapRequired);
+       setProviders(status.providers);
+-      if (status.authenticated) navigate('/', { replace: true });
++      if (status.authenticated) navigate('/connecting', { replace: true });
+     }).catch(() => undefined);
+-    // Keep the explicit authProviders capability probe in this screen so social buttons
+-    // are never treated as configured based only on visual presence.
+     authProviders().then((state) => active && setProviders(state)).catch(() => undefined);
+     return () => { active = false; };
+   }, [navigate]);
+@@ -78,7 +107,7 @@ export const DreamWorkerAuthScreen: React.FC = () => {
+     setError('');
+     setIsSubmitting(true);
+     try {
+-      await loginWithPassword(email, password);
++      await loginWithPassword(identifier, password);
+       await refreshSession();
+       navigate('/connecting', { replace: true });
+     } catch (cause) {
+@@ -93,7 +122,13 @@ export const DreamWorkerAuthScreen: React.FC = () => {
+     setError('');
+     setIsSubmitting(true);
+     try {
+-      await bootstrapAdmin({ email, password, bootstrapSecret, displayName });
++      await bootstrapAdmin({
++        email: bootstrapEmail,
++        username: bootstrapUsername,
++        password: bootstrapPassword,
++        bootstrapSecret,
++        displayName: bootstrapDisplayName,
++      });
+       await refreshSession();
+       navigate('/connecting', { replace: true });
+     } catch (cause) {
+@@ -103,51 +138,122 @@ export const DreamWorkerAuthScreen: React.FC = () => {
+     }
+   };
+ 
+-  const oauthButtons = (Object.keys(providerLabels) as BrowserAuthProvider[]);
++  const configuredProviders = (Object.keys(providerLabels) as BrowserAuthProvider[]).filter((provider) => providers[provider]);
+ 
+-  return <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_48%_20%,#ffffff_0%,#f5faff_34%,#edf7ff_72%,#f8fcff_100%)] text-[#0B1851]">
+-    <WaveField/>
+-    <header className="relative z-10 flex h-[82px] items-center justify-between px-[68px] pt-3">
+-      <div className="flex items-center gap-3">
+-        <img src="/dreamworker-logo.webp" alt="DreamWorker" className="h-[52px] w-[58px] object-contain"/>
+-        <div><div className="text-[25px] font-extrabold leading-none tracking-[-.04em]">DreamWorker</div><div className="mt-1 text-[15px] font-medium text-[#5268AD]">MCP Control Plane</div></div>
++  return (
++    <div className="relative min-h-screen overflow-hidden bg-[#f5f8fc] text-slate-950">
++      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_15%,rgba(59,130,246,.13),transparent_26%),radial-gradient(circle_at_88%_20%,rgba(45,212,191,.12),transparent_24%),linear-gradient(180deg,#fbfdff_0%,#f2f7fc_100%)]" />
++      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[250px] opacity-70">
++        <svg viewBox="0 0 1368 250" className="h-full w-full" preserveAspectRatio="none" fill="none">
++          <path d="M0 132C190 63 335 216 548 167C765 117 862 212 1074 155C1194 123 1288 132 1368 166V250H0V132Z" fill="url(#loginWave1)" opacity=".28" />
++          <path d="M0 182C208 117 384 239 620 192C855 145 1041 222 1368 151V250H0V182Z" fill="url(#loginWave2)" opacity=".26" />
++          <defs>
++            <linearGradient id="loginWave1" x1="0" y1="0" x2="1368" y2="0"><stop stopColor="#60a5fa"/><stop offset=".55" stopColor="#38bdf8"/><stop offset="1" stopColor="#34d399"/></linearGradient>
++            <linearGradient id="loginWave2" x1="0" y1="0" x2="1368" y2="0"><stop stopColor="#dbeafe"/><stop offset=".48" stopColor="#7dd3fc"/><stop offset="1" stopColor="#a7f3d0"/></linearGradient>
++          </defs>
++        </svg>
+       </div>
+-      <div className="flex items-center gap-4">
