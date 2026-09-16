@@ -126,6 +126,35 @@ def is_explicit_quota(status: int, raw: str) -> bool:
     return any(marker in low for marker in QUOTA_MARKERS)
 
 
+def _provider_requirements(providers: list[dict[str, Any]]) -> tuple[bool, bool]:
+    enabled = [p for p in providers if p.get("enabled") == 1]
+    direct_aig = any(p.get("transport") in {"gateway-native", "gateway-custom"} for p in enabled)
+    google_byok = any(
+        p.get("id") == "google-ai-studio"
+        and p.get("credential_required") == 1
+        and bool(p.get("byok_alias"))
+        for p in enabled
+    )
+    return direct_aig, google_byok
+
+
+def _routing_invariants(
+    rules_map: dict[str, Any],
+    enabled_models: set[str],
+    registered_model_ids: set[str],
+) -> bool:
+    required_aliases = ("fast", "coding", "research")
+    all_targets_registered = all(
+        isinstance(model_id, str) and model_id in registered_model_ids
+        for model_id in rules_map.values()
+    )
+    required_routes_enabled = all(
+        isinstance(rules_map.get(alias), str) and rules_map.get(alias) in enabled_models
+        for alias in required_aliases
+    )
+    return all_targets_registered and required_routes_enabled
+
+
 # name, status, evidence, gating
 results: list[tuple[str, str, str, bool]] = []
 
@@ -198,6 +227,9 @@ def main() -> int:
     account_id = CF_ACCOUNT_ID
     cf_headers = {"Authorization": f"Bearer {CF_API_TOKEN}"} if CF_API_TOKEN else {}
     enabled_aliases: set[str] = set()
+    provider_policy_known = False
+    requires_authenticated_aig = True
+    google_byok_required = True
 
     # D1 registry and runtime model consistency.
     if CF_API_TOKEN and account_id:
@@ -208,8 +240,8 @@ def main() -> int:
         query_results: dict[str, list[dict[str, Any]]] = {}
         queries = {
             "providers": (
-                "SELECT id, display_name, kind, enabled, byok_alias, health_state "
-                "FROM providers;"
+                "SELECT id, display_name, kind, provider_slug, transport, auth_type, "
+                "credential_required, enabled, byok_alias, health_state FROM providers;"
             ),
             "models": "SELECT id, provider_id, public_alias, enabled FROM models;",
             "routing_rules": (
@@ -236,6 +268,9 @@ def main() -> int:
         providers = query_results.get("providers", [])
         models = query_results.get("models", [])
         rules = query_results.get("routing_rules", [])
+        provider_policy_known = d1_ok
+        if provider_policy_known:
+            requires_authenticated_aig, google_byok_required = _provider_requirements(providers)
         rules_map = {
             r.get("public_alias"): r.get("model_id")
             for r in rules
@@ -275,34 +310,17 @@ def main() -> int:
                 + ("" if models_match else f"; body={models_http_raw[:250]}"),
             )
 
-        provider_ok = any(
-            p.get("id") == "google-ai-studio"
-            and p.get("enabled") == 1
-            and p.get("byok_alias") == "default"
-            for p in providers
-        )
         registered_model_ids = {
             m.get("id") for m in models if isinstance(m.get("id"), str)
         }
-        routing_targets_registered = all(
-            isinstance(r.get("model_id"), str)
-            and r.get("model_id") in registered_model_ids
-            for r in rules
-        )
-        invariants_ok = (
-            d1_ok
-            and provider_ok
-            and rules_map.get("fast") == "gemini-3.6-flash"
-            and rules_map.get("coding") == "gemini-3.8-flash"
-            and rules_map.get("research") == "gemini-3.8-flash"
-            and routing_targets_registered
-        )
+        provider_ok = bool(enabled_provider_ids)
+        routing_ok = _routing_invariants(rules_map, enabled_models, registered_model_ids)
+        invariants_ok = d1_ok and provider_ok and routing_ok
         record(
             "D1 routing/provider invariants",
             "PASS" if invariants_ok else "FAIL",
-            f"provider_ok={provider_ok}; "
-            f"routing_targets_registered={routing_targets_registered}; "
-            f"routes={rules_map}",
+            f"enabled_provider_count={len(enabled_provider_ids)}; "
+            f"routing_ok={routing_ok}; routes={rules_map}",
         )
 
         # Real completion gates only for aliases currently enabled by D1.
@@ -366,34 +384,39 @@ def main() -> int:
         if GATEWAY_AUTH_TOKEN:
             record("/v1/models D1 consistency", "BLOCKED", "D1 readback unavailable")
 
-    # AI Gateway authentication metadata.
-    if CF_API_TOKEN and account_id:
+    # AI Gateway authentication metadata is required only for enabled providers
+    # that traverse authenticated gateway-native/custom paths. Workers AI binding
+    # and Cloudflare REST routes do not require CF_AIG_TOKEN.
+    if provider_policy_known and not requires_authenticated_aig:
+        record(
+            "AI Gateway authentication",
+            "SKIP",
+            "no enabled provider requires authenticated gateway-native/custom runtime",
+            gating=False,
+        )
+    elif CF_API_TOKEN and account_id:
         aig_url = (
             f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
             f"/ai-gateway/gateways/{GATEWAY_SLUG}"
         )
         a_status, a_payload, a_raw = http_req(aig_url, headers=cf_headers)
         result = _dict_field(a_payload, "result") if a_status == 200 else {}
-        auth_enabled = result.get("authentication", False) or result.get(
-            "auth_required", False
-        )
+        auth_enabled = result.get("authentication", False) or result.get("auth_required", False)
         if a_status == 200 and auth_enabled in (True, 1):
             record("AI Gateway authentication", "PASS", "authentication=true")
         else:
             record(
-                "AI Gateway authentication",
-                "FAIL",
+                "AI Gateway authentication", "FAIL",
                 f"HTTP {a_status}; authentication={auth_enabled}; {a_raw[:200]}",
             )
     else:
-        record(
-            "AI Gateway authentication",
-            "BLOCKED",
-            "management credential/account ID missing",
-        )
+        record("AI Gateway authentication", "BLOCKED", "management credential/account ID missing")
 
-    # BYOK Secrets Store + Provider Config metadata.
-    if CF_API_TOKEN and account_id:
+    # Google BYOK metadata is a gate only while Google AI Studio is enabled.
+    if provider_policy_known and not google_byok_required:
+        record("BYOK Secrets Store", "SKIP", "google-ai-studio is disabled", gating=False)
+        record("BYOK Provider Config", "SKIP", "google-ai-studio is disabled", gating=False)
+    elif CF_API_TOKEN and account_id:
         expected_secret_name = f"{GATEWAY_SLUG}_google-ai-studio_default"
         ss_url = (
             f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
@@ -484,8 +507,8 @@ def main() -> int:
             "management credential/account ID missing",
         )
 
-    # Optional direct raw CF_AIG_TOKEN probe.
-    if CF_AIG_TOKEN and account_id:
+    # Optional direct raw CF_AIG_TOKEN probe only when an enabled provider needs it.
+    if requires_authenticated_aig and CF_AIG_TOKEN and account_id:
         direct_url = (
             f"https://gateway.ai.cloudflare.com/v1/{account_id}/{GATEWAY_SLUG}"
             "/compat/chat/completions"
@@ -539,8 +562,9 @@ def main() -> int:
             "CLOUDFLARE_API_TOKEN",
             "CLOUDFLARE_ACCOUNT_ID",
             "GATEWAY_AUTH_TOKEN",
-            "CF_AIG_TOKEN",
         }
+        if not provider_policy_known or requires_authenticated_aig:
+            required_names.add("CF_AIG_TOKEN")
         missing = sorted(required_names - names)
         record(
             "Worker required secret bindings",

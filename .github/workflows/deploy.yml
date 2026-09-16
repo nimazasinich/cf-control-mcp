@@ -186,7 +186,8 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
-          HF_LIVE_CHECK: ${{ secrets.HUGGINGFACE_TOKEN != '' && '1' || '0' }}
+          # Hugging Face credential health is integration-specific and must not gate core OAuth/MCP acceptance.
+          HF_LIVE_CHECK: '0'
         run: |
           set -euo pipefail
           exec > >(tee -a deploy.log) 2>&1

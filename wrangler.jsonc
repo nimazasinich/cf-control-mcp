@@ -7,6 +7,9 @@
     "enabled": true,
     "head_sampling_rate": 1
   },
+  "ai": {
+    "binding": "AI"
+  },
   "vars": {
     // Cloudflare AI Gateway slug for the provider gateway (not a secret).
     // When set, POST /v1/chat/completions routes via:

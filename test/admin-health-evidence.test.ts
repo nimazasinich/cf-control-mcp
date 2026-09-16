@@ -127,3 +127,57 @@ test('Admin provider health-test persists Cloudflare gateway evidence required f
     globalThis.fetch = originalFetch;
   }
 });
+
+
+test('Admin provider health-test supports Workers AI binding and persists real gateway evidence', async () => {
+  const provider: ProviderRow = {
+    ...providerFixture(),
+    id: 'workers-ai',
+    display_name: 'Workers AI',
+    kind: 'workers-ai',
+    provider_slug: 'workers-ai',
+    transport: 'workers-ai-binding',
+    auth_type: 'cloudflare-binding',
+    credential_required: 0,
+    test_model: '@cf/zai-org/glm-4.7-flash',
+    byok_alias: null,
+    health_state: 'NOT_CONFIGURED',
+  };
+  const ai = {
+    aiGatewayLogId: 'workers-gateway-log',
+    run: async () => ({ response: 'OK' }),
+  };
+  const env = {
+    DM_DB: makeDb(provider),
+    MCP_AUTH_TOKEN: 'owner-secret',
+    CLOUDFLARE_ACCOUNT_ID: 'acct',
+    CF_AIG_GATEWAY_SLUG: 'gateway',
+    AI: ai,
+  } as unknown as AdminEnv;
+  const cookie = (await createSessionCookie(env)).split(';', 1)[0];
+  const response = await handleAdmin(new Request(
+    'https://example.com/admin/api/providers/workers-ai/health-test',
+    {
+      method: 'POST',
+      headers: {
+        Cookie: cookie,
+        Origin: 'https://example.com',
+      },
+    },
+  ), env);
+
+  assert.equal(response.status, 200);
+  const body = await response.json() as {
+    state: string;
+    gatewayVerified?: boolean;
+    gatewayLogId?: string | null;
+    httpStatus?: number | null;
+  };
+  assert.equal(body.state, 'HEALTHY');
+  assert.equal(body.gatewayVerified, true);
+  assert.equal(body.gatewayLogId, 'workers-gateway-log');
+  assert.equal(body.httpStatus, 200);
+  assert.equal(provider.health_state, 'HEALTHY');
+  assert.equal(provider.last_http_status, 200);
+  assert.equal(provider.last_gateway_log_id, 'workers-gateway-log');
+});
