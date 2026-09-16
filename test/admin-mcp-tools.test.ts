@@ -26,7 +26,7 @@ test("Admin MCP Tools endpoint mirrors the runtime tool registry without exposin
 
   const payload: any = await response.json();
   assert.equal(payload.count, tools.length);
-  assert.equal(payload.count, 44);
+  assert.equal(payload.count, 49);
   assert.deepEqual(payload.tools.map((tool: any) => tool.name), tools.map((tool) => tool.name));
   assert.equal(payload.readOnlyCount, tools.filter((tool) => tool.annotations?.readOnlyHint === true).length);
   assert.equal(payload.destructiveCount, tools.filter((tool) => tool.annotations?.destructiveHint === true).length);
