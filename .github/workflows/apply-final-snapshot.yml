@@ -53,6 +53,21 @@ jobs:
           echo "Checksum verified successfully"
           tar -xzf /tmp/final-delta.tar.gz
 
+      - name: Apply exact Login form contract delta
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/admin/ui/login.ts')
+          s = p.read_text(encoding='utf-8')
+          old = r"  const token=document.getElementById('auth-token');\n  const toggle=document.getElementById('toggle-password');"
+          new = r"  const token=document.getElementById('auth-token');\n  form.setAttribute('action', '/admin/login');\n  token.setAttribute('name', 'token');\n  const toggle=document.getElementById('toggle-password');"
+          count = s.count(old)
+          if count != 1:
+              raise SystemExit(f'login patch anchor count={count}, expected 1')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8', newline='')
+          PY
+
       - name: Verify exact source identities
         run: |
           set -euo pipefail
