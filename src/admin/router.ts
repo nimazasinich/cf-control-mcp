@@ -36,7 +36,7 @@ import {
 	listRoutingRules,
 	listRecentHealthChecks,
 } from "./db";
-import { testGoogleAiStudio } from "./health";
+import { testGoogleAiStudio, type HealthResult } from "./health";
 import { setProviderCredential, deleteProviderCredential } from "./credentials";
 import { createCloudflareCustomProvider, deleteCloudflareCustomProvider, normalizeCustomProviderSlug, validateCustomProviderBaseUrl } from "./custom-providers";
 import { beginProviderOperation, updateProviderOperation } from "./lifecycle";
@@ -44,6 +44,15 @@ import { isProviderAuthType, isProviderTransport, knownProviderTemplate } from "
 
 function json(data: unknown, status = 200): Response {
 	return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+}
+
+function providerHealthEvidence(result: Partial<HealthResult>) {
+	return {
+		httpStatus: result.httpStatus ?? null,
+		gatewayLogId: result.gatewayLogId ?? null,
+		gatewayStep: result.gatewayStep ?? null,
+		cfRay: result.cfRay ?? null,
+	};
 }
 
 async function readJsonObject(request: Request): Promise<Record<string, unknown> | null> {
@@ -660,7 +669,7 @@ export async function handleAdmin(
 			const provider = await getProvider(env, id);
 			if (!provider) return json({ ok: false, error: "provider_not_found" }, 404);
 			const result = id === "google-ai-studio" ? await testGoogleAiStudio(env) : { state: "NOT_CONFIGURED" as const, latencyMs: null, errorMessage: "no health check implemented for this provider" };
-			await recordHealthResult(env, id, result.state, result.latencyMs, result.errorMessage);
+			await recordHealthResult(env, id, result.state, result.latencyMs, result.errorMessage, providerHealthEvidence(result));
 			await logAudit(env, "provider.health-test", id, result.state);
 			return json({ ok: true, ...result });
 		}
@@ -678,7 +687,7 @@ export async function handleAdmin(
 
 				// Post-config verification
 				const health = id === "google-ai-studio" ? await testGoogleAiStudio(env) : { state: "NOT_CONFIGURED" as const, latencyMs: null, errorMessage: "no health check implemented" };
-				await recordHealthResult(env, id, health.state, health.latencyMs, health.errorMessage);
+				await recordHealthResult(env, id, health.state, health.latencyMs, health.errorMessage, providerHealthEvidence(health));
 				await logAudit(env, "provider.health-test", id, health.state);
 
 				return json({ ...result, healthState: health.state }, 200);
