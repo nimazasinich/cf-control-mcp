@@ -10,17 +10,19 @@
   After installation, run Wrangler with `npx wrangler`.
 
 
-Total Upload: 1551.75 KiB / gzip: 631.95 KiB
-Worker Startup Time: 16 ms
+Total Upload: 1550.43 KiB / gzip: 631.67 KiB
+Worker Startup Time: 29 ms
 Your worker has access to the following bindings:
 - D1 Databases:
   - DM_DB: DM_DB (138a2aef-9f5a-4635-8346-dc474fdfff93)
+- AI:
+  - Name: AI
 - Vars:
   - CF_AIG_GATEWAY_SLUG: "cf-control-mcp"
-Uploaded cf-control-mcp (2.03 sec)
-Deployed cf-control-mcp triggers (0.12 sec)
+Uploaded cf-control-mcp (2.37 sec)
+Deployed cf-control-mcp triggers (0.17 sec)
   https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-Current Version ID: 2126a3e7-3ac8-4553-bf34-d5a4f804dcd8
+Current Version ID: 7e9bc732-9df4-456a-8aff-9dc79f58e2b6
 
 Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
 === pushing required Worker secrets ===
@@ -122,12 +124,57 @@ PASS | GATE | GET /admin | HTTP 200; Content-Type=text/html
 PASS | GATE | GET /admin/api/overview (no auth) | HTTP 401 unauthorized
 FINAL: PASS — admin console acceptance gates passed
 === live OAuth/MCP verification ===
-Traceback (most recent call last):
-  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 428, in <module>
-    raise SystemExit(main())
-                     ^^^^^^
-  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 406, in main
-    fail(f"hf_whoami failed against the live Worker: {hf_check}")
-  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 91, in fail
-    raise AssertionError(message)
-AssertionError: hf_whoami failed against the live Worker: {'jsonrpc': '2.0', 'id': 4, 'result': {'content': [{'type': 'text', 'text': 'Tool "hf_whoami" failed: Hugging Face API error (401) on /api/whoami-v2: {"error":"User Access Token \\"accesstoken\\" is expired"}'}], 'isError': True}}
+PASS: OAuth discovery, DCR, consent, PKCE, token exchange, MCP initialize, refresh, read-scoped MCP capability enforcement, legacy owner path, and 401 challenge
+=== full production acceptance ===
+=================================================================
+PRODUCTION ACCEPTANCE — cf-control-mcp v1.8
+=================================================================
+Target URL: https://cf-control-mcp.amin-chinisaz-edu.workers.dev
+PASS: environment:GATEWAY_AUTH_TOKEN — configured
+PASS: environment:CLOUDFLARE_API_TOKEN — configured
+PASS: environment:CLOUDFLARE_ACCOUNT_ID — configured
+PASS: /v1 invalid-token challenge — HTTP 401 invalid_api_key
+PASS: D1:providers — HTTP 200; 18 rows
+PASS: D1:models — HTTP 200; 10 rows
+PASS: D1:routing_rules — HTTP 200; 5 rows
+PASS: /v1/models D1 consistency — HTTP 200; expected=['@cf/google/gemma-4-26b-a4b-it', '@cf/nvidia/nemotron-3-120b-a12b', '@cf/zai-org/glm-4.7-flash', 'auto', 'coding', 'fast', 'free', 'research']; returned=['@cf/google/gemma-4-26b-a4b-it', '@cf/nvidia/nemotron-3-120b-a12b', '@cf/zai-org/glm-4.7-flash', 'auto', 'coding', 'fast', 'free', 'research']
+PASS: D1 routing/provider invariants — enabled_provider_count=1; routing_ok=True; routes={'fast': '@cf/zai-org/glm-4.7-flash', 'coding': '@cf/nvidia/nemotron-3-120b-a12b', 'research': '@cf/google/gemma-4-26b-a4b-it', 'free': '@cf/zai-org/glm-4.7-flash', 'auto': '@cf/zai-org/glm-4.7-flash'}
+PASS: /v1/chat/completions:fast — HTTP 200 real completion; response model=@cf/zai-org/glm-4.7-flash
+PASS: /v1/chat/completions:coding — HTTP 200 real completion; response model=@cf/nvidia/nemotron-3-120b-a12b
+SKIP: AI Gateway authentication [non-gating] — no enabled provider requires authenticated gateway-native/custom runtime
+SKIP: BYOK Secrets Store [non-gating] — google-ai-studio is disabled
+SKIP: BYOK Provider Config [non-gating] — google-ai-studio is disabled
+INFO: raw CF_AIG_TOKEN is intentionally not required in CI; Worker end-to-end gates verify the runtime secret
+PASS: Worker required secret bindings — HTTP 200; missing=[]
+=================================================================
+FINAL ACCEPTANCE MATRIX
+=================================================================
+PASS    | GATE | environment:GATEWAY_AUTH_TOKEN | configured
+PASS    | GATE | environment:CLOUDFLARE_API_TOKEN | configured
+PASS    | GATE | environment:CLOUDFLARE_ACCOUNT_ID | configured
+PASS    | GATE | /v1 invalid-token challenge | HTTP 401 invalid_api_key
+PASS    | GATE | D1:providers | HTTP 200; 18 rows
+PASS    | GATE | D1:models | HTTP 200; 10 rows
+PASS    | GATE | D1:routing_rules | HTTP 200; 5 rows
+PASS    | GATE | /v1/models D1 consistency | HTTP 200; expected=['@cf/google/gemma-4-26b-a4b-it', '@cf/nvidia/nemotron-3-120b-a12b', '@cf/zai-org/glm-4.7-flash', 'auto', 'coding', 'fast', 'free', 'research']; returned=['@cf/google/gemma-4-26b-a4b-it', '@cf/nvidia/nemotron-3-120b-a12b', '@cf/zai-org/glm-4.7-flash', 'auto', 'coding', 'fast', 'free', 'research']
+PASS    | GATE | D1 routing/provider invariants | enabled_provider_count=1; routing_ok=True; routes={'fast': '@cf/zai-org/glm-4.7-flash', 'coding': '@cf/nvidia/nemotron-3-120b-a12b', 'research': '@cf/google/gemma-4-26b-a4b-it', 'free': '@cf/zai-org/glm-4.7-flash', 'auto': '@cf/zai-org/glm-4.7-flash'}
+PASS    | GATE | /v1/chat/completions:fast | HTTP 200 real completion; response model=@cf/zai-org/glm-4.7-flash
+PASS    | GATE | /v1/chat/completions:coding | HTTP 200 real completion; response model=@cf/nvidia/nemotron-3-120b-a12b
+SKIP    | INFO | AI Gateway authentication | no enabled provider requires authenticated gateway-native/custom runtime
+SKIP    | INFO | BYOK Secrets Store | google-ai-studio is disabled
+SKIP    | INFO | BYOK Provider Config | google-ai-studio is disabled
+PASS    | GATE | Worker required secret bindings | HTTP 200; missing=[]
+FINAL: PASS — all required production acceptance gates passed
+============================================================
+EXEC TOOLS LIVE SMOKE — deployed Worker /mcp
+============================================================
+Target: https://cf-control-mcp.amin-chinisaz-edu.workers.dev
+PASS: list_code_runtimes paiza.IO capability catalog (31 runtimes)
+PASS: gh_run_code dispatched through deployed Worker
+INFO: gh_get_run_result status=not_found_yet; polling again
+INFO: gh_get_run_result status=queued; polling again
+PASS: gh_get_run_result completed through deployed Worker with expected log output
+PASS: run_code live paiza.IO success path
+PASS: run_code live paiza.IO non-zero exit path
+PASS: run_code live paiza.IO invalid-language fail-closed path
+FINAL: PASS — all four exec tools passed live end-to-end smoke verification
