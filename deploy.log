@@ -1,6 +1,6 @@
 === wrangler deploy ===
 
- ⛅️ wrangler 3.114.17 (update available 4.129.1)
+ ⛅️ wrangler 3.114.17 (update available 4.132.0)
 ------------------------------------------------
 
 [33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe version of Wrangler you are using is now out-of-date.[0m
@@ -10,22 +10,22 @@
   After installation, run Wrangler with `npx wrangler`.
 
 
-Total Upload: 1451.74 KiB / gzip: 609.07 KiB
+Total Upload: 1551.75 KiB / gzip: 631.95 KiB
 Worker Startup Time: 16 ms
 Your worker has access to the following bindings:
 - D1 Databases:
   - DM_DB: DM_DB (138a2aef-9f5a-4635-8346-dc474fdfff93)
 - Vars:
   - CF_AIG_GATEWAY_SLUG: "cf-control-mcp"
-Uploaded cf-control-mcp (2.32 sec)
-Deployed cf-control-mcp triggers (0.16 sec)
+Uploaded cf-control-mcp (2.03 sec)
+Deployed cf-control-mcp triggers (0.12 sec)
   https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-Current Version ID: bc9dc59b-3d3a-4658-95ae-fc9d5bd23f79
+Current Version ID: 2126a3e7-3ac8-4553-bf34-d5a4f804dcd8
 
 Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
 === pushing required Worker secrets ===
 
- ⛅️ wrangler 3.114.17 (update available 4.129.1)
+ ⛅️ wrangler 3.114.17 (update available 4.132.0)
 ------------------------------------------------
 
 [33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe version of Wrangler you are using is now out-of-date.[0m
@@ -38,7 +38,7 @@ Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more
 🌀 Creating the secret for the Worker "cf-control-mcp" 
 ✨ Success! Uploaded secret MCP_AUTH_TOKEN
 
- ⛅️ wrangler 3.114.17 (update available 4.129.1)
+ ⛅️ wrangler 3.114.17 (update available 4.132.0)
 ------------------------------------------------
 
 [33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe version of Wrangler you are using is now out-of-date.[0m
@@ -51,7 +51,7 @@ Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more
 🌀 Creating the secret for the Worker "cf-control-mcp" 
 ✨ Success! Uploaded secret CLOUDFLARE_API_TOKEN
 
- ⛅️ wrangler 3.114.17 (update available 4.129.1)
+ ⛅️ wrangler 3.114.17 (update available 4.132.0)
 ------------------------------------------------
 
 [33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe version of Wrangler you are using is now out-of-date.[0m
@@ -64,7 +64,7 @@ Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more
 🌀 Creating the secret for the Worker "cf-control-mcp" 
 ✨ Success! Uploaded secret CLOUDFLARE_ACCOUNT_ID
 
- ⛅️ wrangler 3.114.17 (update available 4.129.1)
+ ⛅️ wrangler 3.114.17 (update available 4.132.0)
 ------------------------------------------------
 
 [33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe version of Wrangler you are using is now out-of-date.[0m
@@ -79,7 +79,7 @@ Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more
 === preserving existing Worker CF_AIG_TOKEN secret ===
 === pushing optional integration secrets ===
 
- ⛅️ wrangler 3.114.17 (update available 4.129.1)
+ ⛅️ wrangler 3.114.17 (update available 4.132.0)
 ------------------------------------------------
 
 [33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe version of Wrangler you are using is now out-of-date.[0m
@@ -92,7 +92,7 @@ Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more
 🌀 Creating the secret for the Worker "cf-control-mcp" 
 ✨ Success! Uploaded secret HUGGINGFACE_TOKEN
 
- ⛅️ wrangler 3.114.17 (update available 4.129.1)
+ ⛅️ wrangler 3.114.17 (update available 4.132.0)
 ------------------------------------------------
 
 [33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe version of Wrangler you are using is now out-of-date.[0m
@@ -105,7 +105,7 @@ Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more
 🌀 Creating the secret for the Worker "cf-control-mcp" 
 ✨ Success! Uploaded secret GITHUB_PAT
 
- ⛅️ wrangler 3.114.17 (update available 4.129.1)
+ ⛅️ wrangler 3.114.17 (update available 4.132.0)
 ------------------------------------------------
 
 [33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe version of Wrangler you are using is now out-of-date.[0m
@@ -122,57 +122,12 @@ PASS | GATE | GET /admin | HTTP 200; Content-Type=text/html
 PASS | GATE | GET /admin/api/overview (no auth) | HTTP 401 unauthorized
 FINAL: PASS — admin console acceptance gates passed
 === live OAuth/MCP verification ===
-PASS: OAuth discovery, DCR, consent, PKCE, token exchange, MCP initialize, refresh, upgraded MCP tools, legacy path, and 401 challenge
-=== full production acceptance ===
-=================================================================
-PRODUCTION ACCEPTANCE — cf-control-mcp v1.8
-=================================================================
-Target URL: https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-PASS: environment:GATEWAY_AUTH_TOKEN — configured
-PASS: environment:CLOUDFLARE_API_TOKEN — configured
-PASS: environment:CLOUDFLARE_ACCOUNT_ID — configured
-PASS: /v1 invalid-token challenge — HTTP 401 invalid_api_key
-PASS: D1:providers — HTTP 200; 1 rows
-PASS: D1:models — HTTP 200; 7 rows
-PASS: D1:routing_rules — HTTP 200; 3 rows
-PASS: /v1/models D1 consistency — HTTP 200; expected=['coding', 'fast', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash', 'research']; returned=['coding', 'fast', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash', 'research']
-PASS: D1 routing/provider invariants — provider_ok=True; routing_targets_registered=True; routes={'fast': 'gemini-3.6-flash', 'coding': 'gemini-3.8-flash', 'research': 'gemini-3.8-flash'}
-PASS: /v1/chat/completions:fast — HTTP 200 real completion; response model=gemini-3.6-flash
-PASS: /v1/chat/completions:coding — HTTP 200 real completion; response model=gemini-3.8-flash
-PASS: AI Gateway authentication — authentication=true
-PASS: BYOK Secrets Store — secret=cf-control-mcp_google-ai-studio_default; active=True; ai_gateway_scope=True; HTTP 200
-PASS: BYOK Provider Config — HTTP 200; matching default config=True
-INFO: raw CF_AIG_TOKEN is intentionally not required in CI; Worker end-to-end gates verify the runtime secret
-PASS: Worker required secret bindings — HTTP 200; missing=[]
-=================================================================
-FINAL ACCEPTANCE MATRIX
-=================================================================
-PASS    | GATE | environment:GATEWAY_AUTH_TOKEN | configured
-PASS    | GATE | environment:CLOUDFLARE_API_TOKEN | configured
-PASS    | GATE | environment:CLOUDFLARE_ACCOUNT_ID | configured
-PASS    | GATE | /v1 invalid-token challenge | HTTP 401 invalid_api_key
-PASS    | GATE | D1:providers | HTTP 200; 1 rows
-PASS    | GATE | D1:models | HTTP 200; 7 rows
-PASS    | GATE | D1:routing_rules | HTTP 200; 3 rows
-PASS    | GATE | /v1/models D1 consistency | HTTP 200; expected=['coding', 'fast', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash', 'research']; returned=['coding', 'fast', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash', 'research']
-PASS    | GATE | D1 routing/provider invariants | provider_ok=True; routing_targets_registered=True; routes={'fast': 'gemini-3.6-flash', 'coding': 'gemini-3.8-flash', 'research': 'gemini-3.8-flash'}
-PASS    | GATE | /v1/chat/completions:fast | HTTP 200 real completion; response model=gemini-3.6-flash
-PASS    | GATE | /v1/chat/completions:coding | HTTP 200 real completion; response model=gemini-3.8-flash
-PASS    | GATE | AI Gateway authentication | authentication=true
-PASS    | GATE | BYOK Secrets Store | secret=cf-control-mcp_google-ai-studio_default; active=True; ai_gateway_scope=True; HTTP 200
-PASS    | GATE | BYOK Provider Config | HTTP 200; matching default config=True
-PASS    | GATE | Worker required secret bindings | HTTP 200; missing=[]
-FINAL: PASS — all required production acceptance gates passed
-============================================================
-EXEC TOOLS LIVE SMOKE — deployed Worker /mcp
-============================================================
-Target: https://cf-control-mcp.amin-chinisaz-edu.workers.dev
-PASS: list_code_runtimes paiza.IO capability catalog (31 runtimes)
-PASS: gh_run_code dispatched through deployed Worker
-INFO: gh_get_run_result status=not_found_yet; polling again
-INFO: gh_get_run_result status=in_progress; polling again
-PASS: gh_get_run_result completed through deployed Worker with expected log output
-PASS: run_code live paiza.IO success path
-PASS: run_code live paiza.IO non-zero exit path
-PASS: run_code live paiza.IO invalid-language fail-closed path
-FINAL: PASS — all four exec tools passed live end-to-end smoke verification
+Traceback (most recent call last):
+  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 428, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 406, in main
+    fail(f"hf_whoami failed against the live Worker: {hf_check}")
+  File "/home/runner/work/cf-control-mcp/cf-control-mcp/scripts/oauth_smoke.py", line 91, in fail
+    raise AssertionError(message)
+AssertionError: hf_whoami failed against the live Worker: {'jsonrpc': '2.0', 'id': 4, 'result': {'content': [{'type': 'text', 'text': 'Tool "hf_whoami" failed: Hugging Face API error (401) on /api/whoami-v2: {"error":"User Access Token \\"accesstoken\\" is expired"}'}], 'isError': True}}
