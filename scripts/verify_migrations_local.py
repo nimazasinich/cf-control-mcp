@@ -13,7 +13,7 @@ def table_columns(db: sqlite3.Connection, table: str) -> set[str]:
 
 def assert_contract(db: sqlite3.Connection) -> None:
     tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    for required in {"providers", "models", "routing_rules", "health_checks", "audit_events", "oauth_codes", "refresh_token_families", "provider_operations", "rate_limit_buckets"}:
+    for required in {"providers", "models", "routing_rules", "health_checks", "audit_events", "oauth_codes", "refresh_token_families", "provider_operations", "rate_limit_buckets", "provider_doctor_runs", "provider_doctor_results"}:
         assert required in tables, f"missing table: {required}"
     assert "correlation_id" in table_columns(db, "health_checks")
     assert "display_name" in table_columns(db, "models"), "missing models.display_name (migration 0009)"
@@ -69,6 +69,8 @@ def verify_upgrade_chain() -> None:
         "0007_observability.sql",
         "0008_rate_limits.sql",
         "0009_model_metadata.sql",
+        "0010_google_relay_provider.sql",
+        "0011_provider_doctor_observability.sql",
     ]:
         db.executescript((ROOT / "migrations" / name).read_text())
     assert_contract(db)
@@ -77,4 +79,4 @@ def verify_upgrade_chain() -> None:
 if __name__ == "__main__":
     verify_fresh_schema()
     verify_upgrade_chain()
-    print("migration verification: PASS (fresh schema + 0002->0009 upgrade chain)")
+    print("migration verification: PASS (fresh schema + 0002->0011 upgrade chain)")

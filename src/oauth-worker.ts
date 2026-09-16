@@ -64,6 +64,7 @@ interface RefreshTokenPayload extends SignedPayload {
   scope: string;
   aud: string;
   jti: string;
+  family_id: string;
 }
 
 interface ConsentFormPayload extends SignedPayload {
@@ -88,6 +89,11 @@ function nowSeconds(): number {
 function randomId(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(18));
   return base64UrlEncode(bytes);
+}
+
+async function hashJti(jti: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(jti)));
+  return Array.from(digest).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function base64UrlEncode(input: Uint8Array | string): string {
@@ -433,6 +439,7 @@ async function authorize(request: Request, env: Env, origin: string): Promise<Re
     return consentPage(client.client_name, formPayload.redirect_uri, formPayload.scope, retryToken, "Approval token is incorrect.");
   }
 
+  const issuedNow = nowSeconds();
   const codePayload: AuthorizationCodePayload = {
     kind: "authorization_code",
     client_id: formPayload.client_id,
@@ -441,9 +448,12 @@ async function authorize(request: Request, env: Env, origin: string): Promise<Re
     scope: normalizeScope(formPayload.scope),
     aud: resourceUrl(origin),
     jti: randomId(),
-    iat: nowSeconds(),
-    exp: nowSeconds() + AUTH_CODE_TTL_SECONDS,
+    iat: issuedNow,
+    exp: issuedNow + AUTH_CODE_TTL_SECONDS,
   };
+  await env.DM_DB.prepare(
+    "INSERT INTO oauth_codes (code_id, client_id, redirect_uri, issued_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+  ).bind(codePayload.jti, codePayload.client_id, codePayload.redirect_uri, issuedNow, codePayload.exp).run();
   const code = await signValue("code", codePayload, env.MCP_AUTH_TOKEN);
   const redirect = new URL(formPayload.redirect_uri);
   redirect.searchParams.set("code", code);
@@ -462,6 +472,7 @@ async function issueTokens(
   origin: string,
   clientId: string,
   scope: string,
+  refreshOverride?: { familyId: string; jti: string },
 ): Promise<Record<string, unknown>> {
   const normalizedScope = normalizeScope(scope);
   const issuedAt = nowSeconds();
@@ -491,12 +502,26 @@ async function issueTokens(
   };
 
   if (normalizedScope.split(/\s+/).includes("offline_access")) {
+    let familyId: string;
+    let refreshJti: string;
+    if (refreshOverride) {
+      familyId = refreshOverride.familyId;
+      refreshJti = refreshOverride.jti;
+    } else {
+      familyId = randomId();
+      refreshJti = randomId();
+      const tokenHash = await hashJti(refreshJti);
+      await env.DM_DB.prepare(
+        "INSERT INTO refresh_token_families (family_id, current_token_hash, client_id, issued_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      ).bind(familyId, tokenHash, clientId, issuedAt, issuedAt).run();
+    }
     tokenResponse.refresh_token = await signValue(
       "refresh",
       {
         kind: "refresh_token",
         ...common,
-        jti: randomId(),
+        jti: refreshJti,
+        family_id: familyId,
         exp: issuedAt + REFRESH_TOKEN_TTL_SECONDS,
       } as RefreshTokenPayload,
       env.MCP_AUTH_TOKEN,
@@ -531,6 +556,13 @@ async function tokenEndpoint(request: Request, env: Env, origin: string): Promis
     }
     if (!client.redirect_uris.includes(redirectUri)) return oauthError("invalid_grant", "redirect_uri is not registered for this client");
     if (!(await pkceMatches(verifier, payload.code_challenge))) return oauthError("invalid_grant", "PKCE verification failed");
+    // D1 one-time-use: atomically mark the code consumed; changes=0 means already used or expired.
+    const consumeResult = await env.DM_DB.prepare(
+      "UPDATE oauth_codes SET consumed_at = ? WHERE code_id = ? AND client_id = ? AND redirect_uri = ? AND consumed_at IS NULL AND expires_at > ?",
+    ).bind(nowSeconds(), payload.jti, clientId, redirectUri, nowSeconds()).run();
+    if (!consumeResult.meta.changes || consumeResult.meta.changes < 1) {
+      return oauthError("invalid_grant", "Authorization code has already been used");
+    }
     return json(await issueTokens(env, origin, clientId, payload.scope));
   }
 
@@ -542,7 +574,23 @@ async function tokenEndpoint(request: Request, env: Env, origin: string): Promis
     if (payload.client_id !== clientId || payload.aud !== resourceUrl(origin)) {
       return oauthError("invalid_grant", "Refresh token does not match this client or resource");
     }
-    return json(await issueTokens(env, origin, clientId, payload.scope));
+    // D1 refresh-token rotation: verify current hash and rotate atomically.
+    const presentedHash = await hashJti(payload.jti);
+    const issuedAt = nowSeconds();
+    const successorJti = randomId();
+    const successorHash = await hashJti(successorJti);
+    const rotateResult = await env.DM_DB.prepare(
+      "UPDATE refresh_token_families SET current_token_hash = ?, updated_at = ? WHERE family_id = ? AND client_id = ? AND current_token_hash = ? AND revoked_at IS NULL",
+    ).bind(successorHash, issuedAt, payload.family_id, clientId, presentedHash).run();
+    if (!rotateResult.meta.changes || rotateResult.meta.changes < 1) {
+      // Hash mismatch or family revoked — this token has already been rotated or the family is revoked.
+      // Revoke the entire family (token reuse detected).
+      await env.DM_DB.prepare(
+        "UPDATE refresh_token_families SET revoked_at = ?, updated_at = ? WHERE family_id = ? AND client_id = ? AND revoked_at IS NULL",
+      ).bind(issuedAt, issuedAt, payload.family_id, clientId).run();
+      return oauthError("invalid_grant", "Refresh token has already been used; token family has been revoked");
+    }
+    return json(await issueTokens(env, origin, clientId, payload.scope, { familyId: payload.family_id, jti: successorJti }));
   }
 
   return oauthError("unsupported_grant_type", "Supported grants: authorization_code, refresh_token");
@@ -577,22 +625,25 @@ function oauthUnauthorized(origin: string): Response {
 async function proxyMcp(request: Request, env: Env, origin: string): Promise<Response> {
   const auth = await authenticateMcp(request, env, origin);
   if (!auth) return oauthUnauthorized(origin);
-  // Both legacy (static token) and oauth (dynamically issued access token)
-  // clients get full, unrestricted tool access once authenticated — no
-  // read-only filtering or write-call blocking. The owner-approval step in
-  // /authorize (consent page) is the actual gate: nothing gets an OAuth
-  // token without the owner typing the approval token in, and that consent
-  // page now says plainly that full read/write access — including
-  // destructive actions — is being granted.
+  // Legacy (static owner-token) clients keep full, unrestricted tool access,
+  // matching pre-OAuth behaviour. OAuth clients are scoped below to exactly
+  // what the owner approved on the /authorize consent page.
   if (auth.mode === "legacy") return legacyWorker.fetch(request, env);
 
   // For OAuth mode, the request's Authorization header carries the signed
   // OAuth access token, not the raw MCP_AUTH_TOKEN secret. The inner legacy
   // worker only knows how to check a bearer against env.MCP_AUTH_TOKEN, so
-  // swap that in for this call so its check passes.
+  // swap that in for this call so its check passes. It also enforces the
+  // granted scopes as MCP capabilities, so an OAuth client only sees and
+  // can call tools within what the owner actually approved in /authorize.
   const authorization = request.headers.get("Authorization") ?? "";
   const bearer = authorization.replace(/^Bearer\s+/i, "");
-  const legacyEnv: Env = { ...env, MCP_AUTH_TOKEN: bearer };
+  const legacyEnv: Env = {
+    ...env,
+    MCP_AUTH_TOKEN: bearer,
+    MCP_AUTHZ_MODE: "oauth",
+    MCP_AUTHZ_SCOPES: [...auth.scopes].join(" "),
+  };
   return legacyWorker.fetch(request, legacyEnv);
 }
 

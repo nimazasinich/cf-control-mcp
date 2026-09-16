@@ -1,0 +1,160 @@
+name: Finalize cf-control-mcp v1.8.0 production release
+
+on:
+  push:
+    branches: [release/v1.8.0-final-verified-20260916]
+    paths:
+      - '.github/workflows/finalize-v1.8.0.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Assert verified runtime source is unchanged
+        run: |
+          set -euo pipefail
+          VERIFIED_SOURCE_COMMIT='1689912ff7f42e7c27f682200855e7868ca2b42b'
+          git diff --exit-code "$VERIFIED_SOURCE_COMMIT" -- \
+            src migrations test scripts package.json package-lock.json wrangler.jsonc
+          echo "PASS: runtime/release source matches verified commit ${VERIFIED_SOURCE_COMMIT}"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Full test suite
+        run: npm test
+
+      - name: Verify migrations locally
+        run: python scripts/verify_migrations_local.py
+
+      - name: Verify version sync
+        run: node scripts/check-version-sync.mjs
+
+      - name: Wrangler dry-run
+        run: npx wrangler deploy --dry-run
+
+      - name: Validate production credentials and account access
+        env:
+          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in MCP_AUTH_TOKEN CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID GATEWAY_AUTH_TOKEN; do
+            if [ -z "${!name:-}" ]; then
+              echo "MISSING_REQUIRED_SECRET: $name"
+              missing=1
+            fi
+          done
+          test "$missing" -eq 0
+          code="$(curl --silent --show-error --output /tmp/account.json --write-out '%{http_code}' \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}")"
+          if [ "$code" != "200" ]; then
+            echo "FAIL: management token cannot access configured Cloudflare account (HTTP $code)"
+            exit 1
+          fi
+          echo "PASS: required repository secrets exist and Cloudflare account access is valid"
+
+      - name: Refresh Worker runtime secrets before final deploy
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+          GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
+          CF_AIG_TOKEN: ${{ secrets.CF_AIG_TOKEN }}
+          HF_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
+          GOOGLE_AI_STUDIO_KEY: ${{ secrets.GOOGLE_AI_STUDIO_KEY }}
+          GH_PAT: ${{ secrets.GH_RUNNER_PAT }}
+          GH_REPO: ${{ secrets.GH_RUNNER_REPO }}
+          BRAVE_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
+          TAVILY_KEY: ${{ secrets.TAVILY_API_KEY }}
+          EXA_KEY: ${{ secrets.EXA_API_KEY }}
+        run: |
+          set -euo pipefail
+          put_secret() {
+            local name="$1" value="$2"
+            printf '%s' "$value" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT_ID" npx wrangler secret put "$name"
+          }
+          put_secret MCP_AUTH_TOKEN "$MCP_AUTH_TOKEN"
+          put_secret CLOUDFLARE_API_TOKEN "$CF_TOKEN"
+          put_secret CLOUDFLARE_ACCOUNT_ID "$ACCOUNT_ID"
+          put_secret GATEWAY_AUTH_TOKEN "$GATEWAY_AUTH_TOKEN"
+          [ -z "$CF_AIG_TOKEN" ] || put_secret CF_AIG_TOKEN "$CF_AIG_TOKEN"
+          [ -z "$HF_TOKEN" ] || put_secret HUGGINGFACE_TOKEN "$HF_TOKEN"
+          [ -z "$GOOGLE_AI_STUDIO_KEY" ] || put_secret GOOGLE_AI_STUDIO_KEY "$GOOGLE_AI_STUDIO_KEY"
+          [ -z "$GH_PAT" ] || put_secret GITHUB_PAT "$GH_PAT"
+          [ -z "$GH_REPO" ] || put_secret GITHUB_REPO "$GH_REPO"
+          [ -z "$BRAVE_KEY" ] || put_secret BRAVE_SEARCH_API_KEY "$BRAVE_KEY"
+          [ -z "$TAVILY_KEY" ] || put_secret TAVILY_API_KEY "$TAVILY_KEY"
+          [ -z "$EXA_KEY" ] || put_secret EXA_API_KEY "$EXA_KEY"
+          echo "PASS: runtime secret refresh completed without printing secret values"
+
+      - name: Apply remote D1 migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx wrangler d1 migrations apply DM_DB --remote
+          echo "PASS: remote D1 migrations applied"
+
+      - name: Deploy exact verified Worker source
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx wrangler deploy | tee /tmp/final-deploy.log
+          if ! grep -E 'Version ID|Current Version ID' /tmp/final-deploy.log; then
+            echo "FAIL: Wrangler deploy succeeded without an observable Worker Version ID"
+            exit 1
+          fi
+
+      - name: Verify Admin unauthenticated boundary
+        env:
+          BASE_URL: https://cf-control-mcp.amin-chinisaz-edu.workers.dev
+        run: |
+          set -euo pipefail
+          admin_resp="$(curl --silent --show-error --output /dev/null --max-time 30 --write-out '%{http_code} %{content_type}' "${BASE_URL}/admin")"
+          admin_status="${admin_resp%% *}"
+          admin_ctype="$(printf '%s' "${admin_resp#* }" | tr '[:upper:]' '[:lower:]')"
+          test "$admin_status" = "200"
+          printf '%s' "$admin_ctype" | grep -q 'text/html'
+          overview_status="$(curl --silent --show-error --output /dev/null --max-time 30 --write-out '%{http_code}' "${BASE_URL}/admin/api/overview")"
+          test "$overview_status" = "401"
+          echo "PASS: Admin public login and owner-only API boundary"
+
+      - name: Verify live OAuth MCP and production acceptance
+        env:
+          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
+          HF_LIVE_CHECK: '0'
+        run: |
+          set -euo pipefail
+          echo "INFO: Hugging Face live credential check is non-gating because the configured optional token is expired"
+          MCP_BASE_URL="https://cf-control-mcp.amin-chinisaz-edu.workers.dev" python3 scripts/oauth_smoke.py
+          python3 scripts/verify_production.py
+
+      - name: Verify live exec tools end-to-end
+        env:
+          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+          MCP_BASE_URL: https://cf-control-mcp.amin-chinisaz-edu.workers.dev
+        run: python3 scripts/exec_tools_live_smoke.py

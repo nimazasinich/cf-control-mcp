@@ -21,6 +21,10 @@
 
 import { internetTools } from "./internet/tools";
 import { paizaExecute, paizaRuntimes } from "./code-execution/paiza";
+import { providerDoctorTools } from "./provider-doctor/tools";
+import type { ProviderDoctorToolDef } from "./provider-doctor/tools";
+import type { AdminEnv } from "./admin/types";
+import { validateToolArguments } from "./mcp-validation";
 
 export interface Env {
 	MCP_AUTH_TOKEN: string;
@@ -80,6 +84,21 @@ export interface Env {
 	 * Set via: wrangler secret put GOOGLE_AI_STUDIO_KEY
 	 */
 	GOOGLE_AI_STUDIO_KEY?: string;
+
+	// -------------------------------------------------------------------------
+	// OAuth capability enforcement (v1.8 hardening)
+	// -------------------------------------------------------------------------
+	/**
+	 * When set to "oauth", tools/list and tools/call enforce MCP capability
+	 * scoping based on MCP_AUTHZ_SCOPES. Without this, all tools are exposed
+	 * to the bearer-token holder (existing behaviour).
+	 */
+	MCP_AUTHZ_MODE?: string;
+	/**
+	 * Space-separated OAuth scopes granted to the current MCP session.
+	 * Example: "mcp:read offline_access"
+	 */
+	MCP_AUTHZ_SCOPES?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +128,8 @@ const JSONRPC_PARSE_ERROR = -32700;
 const JSONRPC_INVALID_REQUEST = -32600;
 const JSONRPC_METHOD_NOT_FOUND = -32601;
 const JSONRPC_INTERNAL_ERROR = -32603;
+const JSONRPC_CAPABILITY_DENIED = -32001;
+const JSONRPC_INVALID_PARAMS = -32602;
 
 function rpcResult(id: JsonRpcRequest["id"], result: unknown): JsonRpcSuccess {
 	return { jsonrpc: "2.0", id, result };
@@ -119,6 +140,53 @@ function rpcError(id: JsonRpcRequest["id"], code: number, message: string, data?
 }
 
 // ---------------------------------------------------------------------------
+// MCP capability enforcement
+// ---------------------------------------------------------------------------
+
+/**
+ * Capability levels, ordered from least to most privileged.
+ * A session holding "mcp:execute" implicitly holds "mcp:read".
+ * A session holding "mcp:admin" implicitly holds all lower levels.
+ * A session with no MCP_AUTHZ_MODE sees all tools (legacy bearer-token mode).
+ */
+const CAPABILITY_ORDER = ["mcp:read", "mcp:execute", "mcp:write", "mcp:admin"] as const;
+type McpCapability = (typeof CAPABILITY_ORDER)[number];
+
+function sessionCapabilities(env: Env): Set<string> | null {
+	if (env.MCP_AUTHZ_MODE !== "oauth") return null; // null = unrestricted
+	const scopes = (env.MCP_AUTHZ_SCOPES ?? "").split(/\s+/).filter(Boolean);
+	const caps = new Set<string>();
+	for (const scope of scopes) {
+		const idx = CAPABILITY_ORDER.indexOf(scope as McpCapability);
+		if (idx >= 0) {
+			// Grant this level and all lower levels
+			for (let i = 0; i <= idx; i++) caps.add(CAPABILITY_ORDER[i]);
+		}
+	}
+	return caps;
+}
+
+function hasCapability(caps: Set<string> | null, required: string): boolean {
+	if (caps === null) return true; // legacy mode: all granted
+	return caps.has(required);
+}
+
+/**
+ * Resolve the MCP capability required for a tool. An explicit `mcpCapability`
+ * always wins (used by Provider Doctor and any future tool that wants a
+ * specific level). Otherwise it's derived from the MCP annotations already
+ * present on every tool: readOnlyHint -> mcp:read, destructiveHint ->
+ * mcp:write, anything else (side-effecting but non-destructive, e.g. code
+ * execution) -> mcp:execute.
+ */
+function toolCapability(tool: Pick<ToolDef, "mcpCapability" | "annotations">): string {
+	if (tool.mcpCapability) return tool.mcpCapability;
+	if (tool.annotations?.readOnlyHint === true) return "mcp:read";
+	if (tool.annotations?.destructiveHint === true) return "mcp:write";
+	return "mcp:execute";
+}
+
+// ---------------------------------------------------------------------------
 // Tool definitions
 // ---------------------------------------------------------------------------
 
@@ -126,6 +194,8 @@ export interface ToolDef {
 	name: string;
 	description: string;
 	inputSchema: Record<string, unknown>;
+	/** Optional explicit MCP capability required to see/call this tool. When absent, derived from annotations. */
+	mcpCapability?: string;
 	annotations?: {
 		readOnlyHint?: boolean;
 		destructiveHint?: boolean;
@@ -1138,6 +1208,7 @@ export const tools: ToolDef[] = [
 		},
 	},
 	...(internetTools as ToolDef[]),
+	...(providerDoctorTools as unknown as ToolDef[]),
 ];
 
 const toolsByName = new Map(tools.map((t) => [t.name, t]));
@@ -1162,15 +1233,18 @@ async function handleRpc(req: JsonRpcRequest, env: Env): Promise<JsonRpcSuccess 
 			// Notifications have no response body; caller filters these out.
 			return rpcResult(req.id, null);
 
-		case "tools/list":
+		case "tools/list": {
+			const caps = sessionCapabilities(env);
+			const visible = tools.filter((t) => hasCapability(caps, toolCapability(t)));
 			return rpcResult(req.id, {
-				tools: tools.map((t) => ({
+				tools: visible.map((t) => ({
 					name: t.name,
 					description: t.description,
 					inputSchema: t.inputSchema,
 					annotations: t.annotations,
 				})),
 			});
+		}
 
 		case "tools/call": {
 			const name = req.params?.name as string;
@@ -1178,6 +1252,15 @@ async function handleRpc(req: JsonRpcRequest, env: Env): Promise<JsonRpcSuccess 
 			const tool = toolsByName.get(name);
 			if (!tool) {
 				return rpcError(req.id, JSONRPC_INVALID_REQUEST, `Unknown tool: ${name}`);
+			}
+			const caps = sessionCapabilities(env);
+			const required = toolCapability(tool);
+			if (!hasCapability(caps, required)) {
+				return rpcError(req.id, JSONRPC_CAPABILITY_DENIED, `Tool "${name}" requires capability ${required}`);
+			}
+			const validation = validateToolArguments(tool.inputSchema, args);
+			if (!validation.ok) {
+				return rpcError(req.id, JSONRPC_INVALID_PARAMS, `Invalid arguments for "${name}"`, { errors: validation.errors });
 			}
 			try {
 				const result = await tool.handler(args, env);
