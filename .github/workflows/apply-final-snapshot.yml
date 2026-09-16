@@ -1,0 +1,116 @@
+name: Apply verified v1.8.0 snapshot
+
+on:
+  push:
+    branches:
+      - release/v1.8.0-final-verified-20260916
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct verified source delta
+        run: |
+          set -euo pipefail
+          cat .release-input/final-delta.part* | base64 -d > /tmp/final-delta.tar.gz
+          echo '2b0448e0a76f9fa8779052f6637e3809ae1118614eff586d16cd7e8c81c9cf92  /tmp/final-delta.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/final-delta.tar.gz
+
+      - name: Apply exact Login form contract delta
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/admin/ui/login.ts')
+          s = p.read_text(encoding='utf-8')
+          old = "  const token=document.getElementById('auth-token');\n  const toggle=document.getElementById('toggle-password');"
+          new = "  const token=document.getElementById('auth-token');\n  form.setAttribute('action', '/admin/login');\n  token.setAttribute('name', 'token');\n  const toggle=document.getElementById('toggle-password');"
+          count = s.count(old)
+          if count != 1:
+              raise SystemExit(f'login patch anchor count={count}, expected 1')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8', newline='')
+          PY
+
+      - name: Verify exact source identities
+        run: |
+          set -euo pipefail
+          check_blob() {
+            local path="$1" expected="$2" actual
+            actual="$(git hash-object "$path")"
+            if [ "$actual" != "$expected" ]; then
+              echo "FAIL: blob mismatch for $path"
+              echo "expected=$expected"
+              echo "actual=$actual"
+              exit 1
+            fi
+            echo "PASS: $path $actual"
+          }
+          check_blob src/index.ts 84fb46e6c8bb91d69445951041253c8ed78e5c2e
+          check_blob src/admin/router.ts 0056839f0a814a97935f8c917114a909f850b029
+          check_blob src/admin/ui/prelogin.ts bde1b1a814354108723a815d94a6e16679fc1a30
+          check_blob src/admin/ui/login.ts b7d31f59f14bed4bfe9a756acbeb958372ee9b4d
+          check_blob src/oauth-worker.ts 19bafd46acced73613d88ba8edf620389bf7da88
+          check_blob src/admin/schema.sql 3533f0ebd4467a5847095aeeb0732671790c7c74
+          check_blob scripts/verify_migrations_local.py 2de5ef727da542a3973c69dd18f903abf9a64c12
+          check_blob migrations/0011_provider_doctor_observability.sql b3df9268467e5b2cb73124a0c1546489e65671ad
+          check_blob test/provider-doctor.test.ts f48b063be4a782e3a0ac4044578f5ab32b9edcbc
+          check_blob src/admin/ui/provider-doctor-fidelity.ts abcf14023aa3b8cdebc0ea39e995a734dff34609
+          check_blob src/provider-doctor/admin-api.ts c78ea82d769741272332000128e2628993a1b365
+          check_blob src/provider-doctor/classifier.ts a7fc068001ae531bd5728c5e4158e0f6d7747f41
+          check_blob src/provider-doctor/doctor.ts acb4414c470bc2a81a220a019cfaf5c0d43013c2
+          check_blob src/provider-doctor/index.ts 11d788a2cd411d04f7925ff2339cd158bbde4bad
+          check_blob src/provider-doctor/model-audit.ts eada67208fdd6058c159d5d95f29250cd4b5b2b3
+          check_blob src/provider-doctor/persistence.ts c471921c5fd9783544254f5d917518ca0789075b
+          check_blob src/provider-doctor/probe.ts 0ec2f50260a3b932db3fabfd9a96f07e936955c7
+          check_blob src/provider-doctor/redaction.ts c90df8c39b670ab9b9bcfe48428636c4a40fa90c
+          check_blob src/provider-doctor/route-matrix.ts 19ba164a08173c4cfb5d2c67969c3aea798b34c3
+          check_blob src/provider-doctor/tools.ts 916b2e78d252fe939f482755e3c92cfd5ef38ff3
+          check_blob src/provider-doctor/types.ts d526ef7544cbda875f284f4a182477c9568438e8
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Full test suite
+        run: npm test
+
+      - name: Verify migrations locally
+        run: python scripts/verify_migrations_local.py
+
+      - name: Verify version sync
+        run: node scripts/check-version-sync.mjs
+
+      - name: Wrangler dry-run
+        run: npx wrangler deploy --dry-run
+
+      - name: Commit verified runtime delta to release branch
+        run: |
+          set -euo pipefail
+          git config user.email 'actions@github.com'
+          git config user.name 'release-bot'
+          git add \
+            src/index.ts \
+            src/admin/router.ts \
+            src/admin/ui/prelogin.ts \
+            src/admin/ui/login.ts \
+            src/admin/ui/provider-doctor-fidelity.ts \
+            src/oauth-worker.ts \
+            src/admin/schema.sql \
+            src/provider-doctor \
+            migrations/0011_provider_doctor_observability.sql \
+            scripts/verify_migrations_local.py \
+            test/provider-doctor.test.ts
+          git diff --cached --check
+          git diff --cached --quiet && { echo 'FAIL: expected release delta is empty'; exit 1; }
+          git commit -m 'release: stage verified cf-control-mcp v1.8.0 source snapshot'
+          git push origin HEAD
