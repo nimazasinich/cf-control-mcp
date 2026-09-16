@@ -10,6 +10,7 @@ import { preLoginLoadingHtml } from "./ui/prelogin";
 import { getAdminUsageSummary } from "./usage-ext";
 import { getAdminSettingsSummary } from "./settings-ext";
 import { checkAdminSameOrigin, isAdminMutationMethod } from "./request-security";
+import { handleProviderDoctorAdmin } from "../provider-doctor/admin-api";
 import { queryAuditEvents } from "./audit-ext";
 import {
 	createModel,
@@ -323,16 +324,23 @@ export async function handleAdmin(
 
 	if (path === "/admin/login" && request.method === "GET") {
 		if (authed) return new Response(null, { status: 302, headers: { Location: "/admin" } });
-		return new Response(loginPageHtml(), { headers: { "Content-Type": "text/html", "Cache-Control": "private, no-store" } });
+		if (url.searchParams.get("ready") === "1") {
+			return new Response(loginPageHtml(), { headers: { "Content-Type": "text/html", "Cache-Control": "private, no-store" } });
+		}
+		return new Response(preLoginLoadingHtml(), { headers: { "Content-Type": "text/html", "Cache-Control": "private, no-store" } });
 	}
 
 	if (path === "/admin/loading" && request.method === "GET") {
 		return new Response(preLoginLoadingHtml(), { headers: { "Content-Type": "text/html", "Cache-Control": "private, no-store" } });
 	}
 
+	if (path === "/admin/api/prelogin" && request.method === "GET") {
+		return json({ ok: true, authenticated: authed });
+	}
+
 	if (!authed) {
 		if (path === "/admin" && request.method === "GET") {
-			return new Response(preLoginLoadingHtml(), { headers: { "Content-Type": "text/html", "Cache-Control": "private, no-store" } });
+			return new Response(preLoginLoadingHtml("/admin/login"), { headers: { "Content-Type": "text/html", "Cache-Control": "private, no-store" } });
 		}
 		if (!path.startsWith("/admin/api")) {
 			return new Response(null, { status: 302, headers: { Location: "/admin/login" } });
@@ -340,11 +348,16 @@ export async function handleAdmin(
 		return json({ ok: false, error: "unauthorized" }, 401);
 	}
 
-	// Authenticated Admin application (SPA fallback for all /admin and /admin/* routes)
+	// Authenticated Admin application (SPA fallback for all /admin and /admin/* routes,
+	// including /admin/provider-doctor which activates the Provider Doctor page client-side)
 	if (request.method === "GET" && !path.startsWith("/admin/api")) {
 		return new Response(dashboardHtml(), { headers: { "Content-Type": "text/html", "Cache-Control": "private, no-store" } });
 	}
 
+	if (path.startsWith("/admin/api/provider-doctor/")) {
+		const doctorResponse = await handleProviderDoctorAdmin(request, env);
+		if (doctorResponse) return doctorResponse;
+	}
 
 	if (path === "/admin/api/overview" && request.method === "GET") {
 		const [providers, models, rules] = await Promise.all([
