@@ -23,7 +23,7 @@ jobs:
       - name: Assert verified runtime source is unchanged
         run: |
           set -euo pipefail
-          VERIFIED_SOURCE_COMMIT='f2a6cedac460bb00c326769f133d2f0c8f6ca717'
+          VERIFIED_SOURCE_COMMIT='1689912ff7f42e7c27f682200855e7868ca2b42b'
           git diff --exit-code "$VERIFIED_SOURCE_COMMIT" -- \
             src migrations test scripts package.json package-lock.json wrangler.jsonc
           echo "PASS: runtime/release source matches verified commit ${VERIFIED_SOURCE_COMMIT}"
