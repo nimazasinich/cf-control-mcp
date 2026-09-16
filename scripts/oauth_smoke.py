@@ -22,6 +22,8 @@ from pathlib import Path
 
 BASE_URL = os.environ.get("MCP_BASE_URL", "https://cf-control-mcp.amin-chinisaz-edu.workers.dev").rstrip("/")
 OWNER_TOKEN = os.environ.get("MCP_AUTH_TOKEN", "")
+OAUTH_READ_TOOL_COUNT = 32
+OWNER_TOOL_COUNT = 49
 READ_ONLY_TOOLS = {
     "cf_list_zones",
     "cf_list_dns_records",
@@ -39,6 +41,9 @@ READ_ONLY_TOOLS = {
     "hf_search_models",
     "hf_repo_info",
     "hf_list_repo_files",
+    "provider_doctor_summary",
+    "provider_doctor_provider",
+    "provider_doctor_history",
 }
 WRITE_TOOLS = {
     "cf_create_dns_record",
@@ -52,6 +57,13 @@ WRITE_TOOLS = {
     "hf_commit_file",
     "hf_delete_file",
     "hf_api_request",
+}
+OAUTH_FORBIDDEN_TOOLS = WRITE_TOOLS | {
+    "cf_api_request",
+    "run_code",
+    "gh_run_code",
+    "provider_doctor_probe",
+    "provider_doctor_probe_record",
 }
 
 
@@ -309,15 +321,19 @@ def main() -> int:
         body=tools_body,
     )
     oauth_tool_list = tools_response["result"]["tools"]
-    if len(oauth_tool_list) != 44:
-        fail(f"OAuth tools/list returned {len(oauth_tool_list)} tools; expected 44 for v1.8")
+    if len(oauth_tool_list) != OAUTH_READ_TOOL_COUNT:
+        fail(
+            f"OAuth mcp:read tools/list returned {len(oauth_tool_list)} tools; "
+            f"expected {OAUTH_READ_TOOL_COUNT} for v1.8"
+        )
     oauth_tools = {tool["name"] for tool in oauth_tool_list}
-    if not WRITE_TOOLS.issubset(oauth_tools) or "cf_api_request" not in oauth_tools:
-        fail(f"OAuth tools/list is missing full write access: {sorted(oauth_tools)}")
     if not READ_ONLY_TOOLS.issubset(oauth_tools):
-        fail(f"OAuth tools/list is missing read tools: {sorted(oauth_tools)}")
+        fail(f"OAuth mcp:read tools/list is missing required read tools: {sorted(oauth_tools)}")
+    leaked = oauth_tools & OAUTH_FORBIDDEN_TOOLS
+    if leaked:
+        fail(f"privileged tools leaked into the mcp:read OAuth catalog: {sorted(leaked)}")
 
-    passthrough, _ = request_json(
+    read_call, _ = request_json(
         "/mcp",
         method="POST",
         headers={"Authorization": "Bearer " + access_token},
@@ -325,13 +341,26 @@ def main() -> int:
             "jsonrpc": "2.0",
             "id": 2,
             "method": "tools/call",
-            "params": {"name": "cf_api_request", "arguments": {"method": "GET", "path": "/zones"}},
+            "params": {"name": "cf_list_zones", "arguments": {}},
         },
     )
-    if passthrough.get("result", {}).get("isError"):
-        fail(f"cf_api_request via OAuth token failed: {passthrough}")
-    if "read-only OAuth scope" in json.dumps(passthrough):
-        fail("OAuth token was unexpectedly blocked by a leftover read-only scope guard")
+    if read_call.get("result", {}).get("isError"):
+        fail(f"read-only cf_list_zones call via OAuth token failed: {read_call}")
+
+    blocked_write, _ = request_json(
+        "/mcp",
+        method="POST",
+        headers={"Authorization": "Bearer " + access_token},
+        body={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "cf_create_dns_record", "arguments": {}},
+        },
+    )
+    blocked_error = blocked_write.get("error", {})
+    if blocked_error.get("code") != -32001 or "mcp:write" not in blocked_error.get("message", ""):
+        fail(f"mcp:read token did not fail closed on a write tool: {blocked_write}")
 
     refresh_body = urllib.parse.urlencode(
         {
@@ -356,8 +385,10 @@ def main() -> int:
         body=tools_body,
     )
     legacy_tools = {tool["name"] for tool in legacy["result"]["tools"]}
-    if not WRITE_TOOLS.issubset(legacy_tools):
-        fail("legacy owner-token path no longer exposes the existing write tools")
+    if len(legacy_tools) != OWNER_TOOL_COUNT:
+        fail(f"legacy owner-token tools/list returned {len(legacy_tools)} tools; expected {OWNER_TOOL_COUNT} for v1.8")
+    if not WRITE_TOOLS.issubset(legacy_tools) or "cf_api_request" not in legacy_tools:
+        fail("legacy owner-token path no longer exposes the expected privileged tools")
 
     if os.environ.get("HF_LIVE_CHECK") == "1":
         hf_check, _ = request_json(
@@ -366,7 +397,7 @@ def main() -> int:
             headers={"Authorization": "Bearer " + OWNER_TOKEN},
             body={
                 "jsonrpc": "2.0",
-                "id": 3,
+                "id": 4,
                 "method": "tools/call",
                 "params": {"name": "hf_whoami", "arguments": {}},
             },
@@ -386,7 +417,10 @@ def main() -> int:
     if "oauth-protected-resource" not in challenge_header:
         fail("401 response does not advertise OAuth protected-resource metadata")
 
-    print("PASS: OAuth discovery, DCR, consent, PKCE, token exchange, MCP initialize, refresh, upgraded MCP tools, legacy path, and 401 challenge")
+    print(
+        "PASS: OAuth discovery, DCR, consent, PKCE, token exchange, MCP initialize, refresh, "
+        "read-scoped MCP capability enforcement, legacy owner path, and 401 challenge"
+    )
     return 0
 
 
